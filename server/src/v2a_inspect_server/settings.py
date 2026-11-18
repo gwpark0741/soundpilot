@@ -24,6 +24,7 @@ class ServerSettings(BaseSettings):
     opencv_hw_device: int | None = None
     opencv_ffmpeg_capture_options: str | None = "hw_decoders_any;cuda"
     enable_nvenc: bool = True
+    hunyuan_enabled: bool = True
     hunyuan_model_id: str = "tencent/HunyuanVideo-Foley"
     hunyuan_model_path: Path = Path("HunyuanVideo-Foley")
     hunyuan_model_size: str = "xl"

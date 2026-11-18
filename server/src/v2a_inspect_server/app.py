@@ -36,7 +36,8 @@ async def lifespan(app: FastAPI):
     global sam3_client, hunyuan_client, speech_client
     # Initialize the clients on startup
     sam3_client = Sam3InferenceClient()
-    hunyuan_client = HunyuanInferenceClient()
+    if settings.hunyuan_enabled:
+        hunyuan_client = HunyuanInferenceClient()
     speech_client = KokoroInferenceClient()
     yield
     # Cleanup on shutdown
@@ -105,6 +106,10 @@ async def segment_image_sam3(request: Sam3SegmentImageRequest):
 
 @app.post("/infer/hunyuan/generate-v2a")
 async def generate_v2a_hunyuan(request: HunyuanGenerateV2ARequest):
+    if not settings.hunyuan_enabled:
+        raise HTTPException(
+            status_code=503, detail="Hunyuan is disabled on this server"
+        )
     if hunyuan_client is None:
         raise HTTPException(status_code=503, detail="Hunyuan client not initialized")
     try:
