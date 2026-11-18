@@ -1,8 +1,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Inspector from "./Inspector";
 import Timeline, { type CreateSoundTrackInput } from "./Timeline";
-import TrackingOverlay from "./TrackingOverlay";
+import Stage from "./Stage";
 import { fetchAssetForExport, fetchTrackingWindow } from "../api";
+import { highlightFor, objectColor } from "../lib/selection";
 import type {
   AssetResponse,
   AudioEventArtifact,
@@ -54,7 +55,7 @@ export default function VideoEditor({
   onRegenerateEventAudio,
 }: VideoEditorProps) {
   const [frame, setFrame] = useState(0);
-  const [showTrackingOverlay, setShowTrackingOverlay] = useState(false);
+  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [showExport, setShowExport] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [trackWindow, setTrackWindow] = useState<TrackWindowResponse | null>(null);
@@ -75,11 +76,36 @@ export default function VideoEditor({
   const timelineFrameCount = Math.max(video?.frame_count ?? 0, inferFrameCount(timelineRows));
   const maxFrame = Math.max(0, timelineFrameCount - 1);
   const selectedFrame = clamp(frame, 0, maxFrame);
-  const timeSec = selectedFrame / fps;
   const soundTracks = useMemo(
     () => draftAsset?.sound_timeline?.sound_tracks ?? [],
     [draftAsset],
   );
+  const soundSources = draftAsset?.sound_timeline?.sound_sources;
+  const selectedTrack = soundTracks.find((track) => track.sound_track_id === selectedTrackId);
+  const highlightSceneTrackIds = highlightFor(selectedTrackId, state.track_targets);
+  // Colour index counts only sources that have an object mask, in source order.
+  const maskedSourceIds = (soundSources ?? [])
+    .map((source) => source.sound_source_id)
+    .filter((id) =>
+      soundTracks.some(
+        (track) =>
+          track.sound_source_id === id &&
+          highlightFor(track.sound_track_id, state.track_targets).length > 0,
+      ),
+    );
+  const highlightColor = objectColor(
+    highlightSceneTrackIds.length > 0 && selectedTrack?.sound_source_id
+      ? maskedSourceIds.indexOf(selectedTrack.sound_source_id)
+      : -1,
+  );
+  const selectedSourceLabel = soundSources?.find(
+    (source) => source.sound_source_id === selectedTrack?.sound_source_id,
+  )?.label;
+  const highlightLabel = selectedTrack
+    ? highlightSceneTrackIds.length > 0
+      ? (selectedSourceLabel ?? selectedTrack.label)
+      : `${selectedSourceLabel ?? selectedTrack.label} has no object mask`
+    : null;
   const audioTrackArtifacts = useMemo<AudioTrackArtifact[]>(
     () =>
       hasTimelineEdits
@@ -190,7 +216,13 @@ export default function VideoEditor({
   }, [frame, selectedFrame]);
 
   useEffect(() => {
-    if (!showTrackingOverlay || !video) {
+    if (selectedTrackId === null && soundTracks.length > 0) {
+      setSelectedTrackId(soundTracks[0].sound_track_id);
+    }
+  }, [selectedTrackId, soundTracks]);
+
+  useEffect(() => {
+    if (!selectedTrackId || !video) {
       return;
     }
     if (
@@ -213,7 +245,7 @@ export default function VideoEditor({
       .finally(() => {
         trackWindowRequestRef.current = null;
       });
-  }, [maxFrame, selectedFrame, showTrackingOverlay, state.version, trackWindow, video]);
+  }, [maxFrame, selectedFrame, selectedTrackId, state.version, trackWindow, video]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -1038,45 +1070,27 @@ export default function VideoEditor({
         <section className="editor">
           <div className="preview-grid">
             <div className="video-panel">
-              <div className="preview-toolbar">
-                <button
-                  className="toggle"
-                  disabled={!video}
-                  onClick={togglePlayback}
-                  type="button"
-                >
-                  {isPlaying ? "Pause" : "Play"}
-                </button>
-                <button
-                  className={showTrackingOverlay ? "toggle active" : "toggle"}
-                  disabled={!video}
-                  onClick={() => setShowTrackingOverlay((value) => !value)}
-                  type="button"
-                >
-                  Tracking
-                </button>
-              </div>
               {video ? (
-                <div className="video-frame">
-                  <video
-                    ref={videoRef}
-                    src={
-                      state.status === "complete" && baseAsset?.synthesized_video_path && !hasTimelineEdits
-                        ? `/api/synthesized-video?asset_version=${state.asset_version}`
-                        : `/api/video?asset_version=${state.asset_version}`
-                    }
-                    onPause={() => setIsPlaying(false)}
-                    onPlay={() => setIsPlaying(true)}
-                    onSeeked={syncFrameFromVideo}
-                    onTimeUpdate={syncFrameFromVideo}
-                  />
-                  <TrackingOverlay
-                    video={video}
-                    tracks={trackWindow?.tracks ?? []}
-                    enabled={showTrackingOverlay}
-                    frame={selectedFrame}
-                  />
-                </div>
+                <Stage
+                  frame={selectedFrame}
+                  highlightColor={highlightColor}
+                  highlightLabel={highlightLabel}
+                  highlightSceneTrackIds={highlightSceneTrackIds}
+                  isPlaying={isPlaying}
+                  maxFrame={maxFrame}
+                  onSelectFrame={selectFrame}
+                  onTogglePlay={togglePlayback}
+                  onVideoPlayState={setIsPlaying}
+                  onVideoSync={syncFrameFromVideo}
+                  tracks={trackWindow?.tracks ?? []}
+                  video={video}
+                  videoRef={videoRef}
+                  videoSrc={
+                    state.status === "complete" && baseAsset?.synthesized_video_path && !hasTimelineEdits
+                      ? `/api/synthesized-video?asset_version=${state.asset_version}`
+                      : `/api/video?asset_version=${state.asset_version}`
+                  }
+                />
               ) : (
                 <div className="empty-video">Upload a video to start</div>
               )}
@@ -1095,21 +1109,6 @@ export default function VideoEditor({
                   </a>
                 </section>
               ) : null}
-
-              <label className="playhead">
-                <span>
-                  Frame {selectedFrame} / {maxFrame} ({timeSec.toFixed(2)}s)
-                </span>
-                <input
-                  type="range"
-                  min="0"
-                  max={maxFrame}
-                  step="1"
-                  value={selectedFrame}
-                  onChange={(event) => selectFrame(Number(event.target.value))}
-                  disabled={!video}
-                />
-              </label>
             </div>
             <Inspector
               asset={draftAsset ?? baseAsset}

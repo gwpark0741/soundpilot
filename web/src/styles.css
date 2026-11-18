@@ -308,7 +308,7 @@ button.download-link {
 
 .video-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -383,6 +383,53 @@ button.download-link {
 
 .empty-video {
   color: #939cac;
+}
+
+.stage-chip {
+  align-items: center;
+  background: rgba(10, 11, 13, 0.88);
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  bottom: 8px;
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 500;
+  gap: 6px;
+  inset-inline-start: 8px;
+  margin: 0;
+  max-width: calc(100% - 16px);
+  padding: 4px 10px;
+  position: absolute;
+  z-index: 3;
+}
+
+.stage-sw {
+  border-radius: 50%;
+  flex: none;
+  height: 12px;
+  width: 12px;
+}
+
+.stage-sw.none {
+  border: 2px solid #9aa3b2;
+}
+
+.transport {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.transport input[type="range"] {
+  flex: 1;
+  min-width: 80px;
+  padding: 0;
+}
+
+.time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .playhead {
