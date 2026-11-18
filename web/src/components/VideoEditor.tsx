@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Inspector from "./Inspector";
-import Timeline, { type CreateSoundTrackInput } from "./Timeline";
+import Timeline from "./Timeline";
 import SelectedTrackPanel from "./SelectedTrackPanel";
 import Stage from "./Stage";
 import { fetchAssetForExport, fetchTrackingWindow } from "../api";
@@ -9,7 +9,6 @@ import type {
   AssetResponse,
   AudioEventArtifact,
   AudioTrackArtifact,
-  GenerationModel,
   SoundEvent,
   SoundTrack,
   TimelineRow,
@@ -72,6 +71,7 @@ export default function VideoEditor({
 }: VideoEditorProps) {
   const [frame, setFrame] = useState(0);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const [soloTrackId, setSoloTrackId] = useState<string | null>(null);
   const [showExport, setShowExport] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [trackWindow, setTrackWindow] = useState<TrackWindowResponse | null>(null);
@@ -109,11 +109,15 @@ export default function VideoEditor({
           highlightFor(track.sound_track_id, state.track_targets).length > 0,
       ),
     );
-  const highlightColor = objectColor(
-    highlightSceneTrackIds.length > 0 && selectedTrack?.sound_source_id
-      ? maskedSourceIds.indexOf(selectedTrack.sound_source_id)
-      : -1,
-  );
+  const trackColors: Record<string, string> = {};
+  for (const track of soundTracks) {
+    trackColors[track.sound_track_id] = objectColor(
+      highlightFor(track.sound_track_id, state.track_targets).length > 0 && track.sound_source_id
+        ? maskedSourceIds.indexOf(track.sound_source_id)
+        : -1,
+    );
+  }
+  const highlightColor = (selectedTrackId && trackColors[selectedTrackId]) || objectColor(-1);
   const selectedSourceLabel = soundSources?.find(
     (source) => source.sound_source_id === selectedTrack?.sound_source_id,
   )?.label;
@@ -461,6 +465,12 @@ export default function VideoEditor({
   }
 
   function togglePlayback() {
+    const soloPlaying = audioPreviewRef.current && !audioPreviewRef.current.paused;
+    // Solo on: play that track's stem in sync with the video instead of the mixed preview.
+    if (soloTrackId && audioTrackArtifacts.some((a) => a.sound_track_id === soloTrackId) && !soloPlaying) {
+      playSyncedAudio(trackAudioUrl(soloTrackId), selectedFrame / fps, selectedFrame);
+      return;
+    }
     stopPreviewAudio(true);
     const video = videoRef.current;
     if (!video) {
@@ -509,229 +519,6 @@ export default function VideoEditor({
     setDraftAsset(baseAsset ? cloneAsset(baseAsset) : null);
     setHasTimelineEdits(false);
     setExportStatus("Local timeline edits reset.");
-  }
-
-  function createSoundTrack(input: CreateSoundTrackInput) {
-    const trackType =
-      input.generationModel === "tts" ? "speech" : input.trackType;
-    const track: SoundTrack = {
-      sound_track_id: makeId(),
-      track_type: trackType,
-      label: input.label,
-      canonical_key: input.canonicalKey ?? normalizeCanonicalKey(input.label),
-      sound_source_id: null,
-      generation_model: trackType === "speech" ? "tts" : input.generationModel,
-      notes: null,
-    };
-    setDraftAsset((currentAsset) => {
-      if (!currentAsset) {
-        return currentAsset;
-      }
-      const nextAsset = ensureTimeline(cloneAsset(currentAsset));
-      nextAsset.sound_timeline?.sound_tracks.push(track);
-      return nextAsset;
-    });
-    setHasTimelineEdits(true);
-    setExportStatus(`Created sound track "${track.label}".`);
-  }
-
-  function editSoundTrackGenerationModel(
-    soundTrackId: string,
-    generationModel: GenerationModel,
-  ) {
-    const track = soundTracks.find((item) => item.sound_track_id === soundTrackId);
-    if (!track) {
-      return;
-    }
-    const nextTrackType =
-      generationModel === "tts" ? "speech" : track.track_type;
-    const nextGenerationModel =
-      nextTrackType === "speech" ? "tts" : generationModel;
-    const nextTrack = {
-      ...track,
-      track_type: nextTrackType,
-      generation_model: nextGenerationModel,
-    };
-    setDraftAsset((currentAsset) => {
-      if (!currentAsset?.sound_timeline) {
-        return currentAsset;
-      }
-      const nextAsset = cloneAsset(currentAsset);
-      const timeline = nextAsset.sound_timeline;
-      if (!timeline) {
-        return nextAsset;
-      }
-      const draftTrack = timeline.sound_tracks.find(
-        (item) => item.sound_track_id === soundTrackId,
-      );
-      if (draftTrack) {
-        draftTrack.track_type = nextTrackType;
-        draftTrack.generation_model = nextGenerationModel;
-      }
-      if (nextTrackType === "speech") {
-        timeline.sound_events = timeline.sound_events.map((event) =>
-          event.sound_track_id === soundTrackId
-            ? {
-                ...event,
-                spoken_text:
-                  event.spoken_text?.trim() || event.description.trim() || "speech",
-              }
-            : event,
-        );
-      }
-      return nextAsset;
-    });
-    setTimelineRows((currentRows) =>
-      currentRows.map((row) =>
-        row.sound_track_id === soundTrackId
-          ? {
-              ...row,
-              kind: nextTrackType,
-              lane: soundLane(nextTrack),
-              generation_model: nextGenerationModel,
-              spoken_text:
-                nextTrackType === "speech"
-                  ? row.spoken_text?.trim() || row.label.trim() || "speech"
-                  : null,
-            }
-          : row,
-      ),
-    );
-    setHasTimelineEdits(true);
-    setExportStatus(`Changed "${track.label}" to ${nextGenerationModel.toUpperCase()}.`);
-  }
-
-  function deleteSoundTrack(soundTrackId: string) {
-    const track = soundTracks.find((item) => item.sound_track_id === soundTrackId);
-    const eventCount =
-      draftAsset?.sound_timeline?.sound_events.filter(
-        (event) => event.sound_track_id === soundTrackId,
-      ).length ?? 0;
-    if (
-      !window.confirm(
-        `Delete "${track?.label ?? "sound track"}" and ${eventCount} events?`,
-      )
-    ) {
-      return;
-    }
-    setDraftAsset((currentAsset) => {
-      if (!currentAsset?.sound_timeline) {
-        return currentAsset;
-      }
-      const nextAsset = cloneAsset(currentAsset);
-      const timeline = nextAsset.sound_timeline;
-      if (!timeline) {
-        return nextAsset;
-      }
-      timeline.sound_tracks = timeline.sound_tracks.filter(
-        (item) => item.sound_track_id !== soundTrackId,
-      );
-      timeline.sound_events = timeline.sound_events.filter(
-        (event) => event.sound_track_id !== soundTrackId,
-      );
-      return nextAsset;
-    });
-    setTimelineRows((currentRows) =>
-      currentRows.filter((row) => row.sound_track_id !== soundTrackId),
-    );
-    setHasTimelineEdits(true);
-    setExportStatus(`Deleted sound track "${track?.label ?? soundTrackId}".`);
-  }
-
-  function createSoundEvent(soundTrackId: string, startFrame: number) {
-    const track = soundTracks.find((item) => item.sound_track_id === soundTrackId);
-    if (!track) {
-      return;
-    }
-    let spokenText: string | null = null;
-    if (track.track_type === "speech") {
-      spokenText = window.prompt("Enter the spoken text for this event")?.trim() ?? "";
-      if (!spokenText) {
-        return;
-      }
-    }
-    const nextStart = clamp(startFrame, 0, Math.max(0, maxFrame));
-    const nextEnd = clamp(nextStart + 10, nextStart + 1, timelineFrameCount || 1);
-    const event: SoundEvent = {
-      sound_event_id: makeId(),
-      sound_track_id: soundTrackId,
-      start_frame_index: nextStart,
-      end_frame_index: nextEnd,
-      description: `New ${track.label} event`,
-      spoken_text: spokenText,
-      notes: null,
-    };
-    setDraftAsset((currentAsset) => {
-      if (!currentAsset) {
-        return currentAsset;
-      }
-      const nextAsset = ensureTimeline(cloneAsset(currentAsset));
-      nextAsset.sound_timeline?.sound_events.push(event);
-      return nextAsset;
-    });
-    setTimelineRows((currentRows) => [
-      ...currentRows,
-      timelineRowFromSoundEvent(event, track),
-    ]);
-    setHasTimelineEdits(true);
-    setExportStatus(`Created sound event on "${track.label}".`);
-  }
-
-  function editSoundEventDescription(
-    soundEventId: string,
-    description: string,
-  ) {
-    const nextDescription = description.trim();
-    if (!nextDescription) {
-      return;
-    }
-    setTimelineRows((currentRows) =>
-      currentRows.map((row) =>
-        row.sound_event_id === soundEventId
-          ? { ...row, label: nextDescription }
-          : row,
-      ),
-    );
-    setDraftAsset((currentAsset) =>
-      currentAsset
-        ? updateSoundEventInAsset(currentAsset, soundEventId, (event) => ({
-            ...event,
-            description: nextDescription,
-          }))
-        : currentAsset,
-    );
-    setHasTimelineEdits(true);
-    setExportStatus("Updated sound event description.");
-  }
-
-  function deleteSoundEvent(soundEventId: string) {
-    const row = timelineRows.find((item) => item.sound_event_id === soundEventId);
-    if (
-      !window.confirm(
-        `Delete sound event "${row?.label ?? soundEventId}"? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-    setDraftAsset((currentAsset) => {
-      if (!currentAsset?.sound_timeline) {
-        return currentAsset;
-      }
-      const nextAsset = cloneAsset(currentAsset);
-      const timeline = nextAsset.sound_timeline;
-      if (!timeline) {
-        return nextAsset;
-      }
-      timeline.sound_events = timeline.sound_events.filter(
-        (event) => event.sound_event_id !== soundEventId,
-      );
-      return nextAsset;
-    });
-    setTimelineRows((currentRows) =>
-      currentRows.filter((row) => row.sound_event_id !== soundEventId),
-    );
-    setHasTimelineEdits(true);
-    setExportStatus("Deleted sound event.");
   }
 
   function startEditingSoundEventDetails(soundEventId: string) {
@@ -1181,23 +968,25 @@ export default function VideoEditor({
             rows={timelineRows}
             soundTracks={soundTracks}
             audioTracks={audioTrackArtifacts}
-            audioEvents={audioEventArtifacts}
             assetVersion={state.asset_version}
             frame={selectedFrame}
             frameCount={timelineFrameCount}
-            onCreateSoundTrack={createSoundTrack}
-            onDeleteSoundTrack={deleteSoundTrack}
-            onEditSoundTrackGenerationModel={editSoundTrackGenerationModel}
-            onCreateSoundEvent={createSoundEvent}
-            onDeleteSoundEvent={deleteSoundEvent}
-            onEditSoundEventDescription={editSoundEventDescription}
             onEditSoundEvent={editSoundEventTimestamp}
             onEditSoundEventDetails={startEditingSoundEventDetails}
             onPlayTrackAudio={playTrackAudio}
-            onPlayEventAudio={playEventAudio}
-            onDeleteEventAudio={deleteSoundEventAudio}
             onSelectFrame={selectFrame}
+            fps={fps}
+            selectedTrackId={selectedTrackId}
+            onSelectTrack={setSelectedTrackId}
+            soloTrackId={soloTrackId}
+            onToggleSolo={(id) => setSoloTrackId((current) => (current === id ? null : id))}
+            trackStatus={baseAsset?.track_status ?? {}}
+            appRunning={state.status === "running"}
+            trackColors={trackColors}
           />
+          <p className="sr" role="status">
+            {selectedTrack ? `Selected: ${selectedTrack.label}` : ""}
+          </p>
           </section>
         </section>
 
@@ -1358,19 +1147,6 @@ function applyTimelineEdits(asset: VideoAsset, rows: TimelineRow[]): VideoAsset 
   return editedAsset;
 }
 
-function ensureTimeline(asset: VideoAsset): VideoAsset {
-  if (asset.sound_timeline) {
-    return asset;
-  }
-  asset.sound_timeline = {
-    sound_sources: [],
-    sound_tracks: [],
-    sound_events: [],
-    notes: null,
-  };
-  return asset;
-}
-
 function updateSoundEventInAsset(
   asset: VideoAsset,
   soundEventId: string,
@@ -1385,38 +1161,6 @@ function updateSoundEventInAsset(
     event.sound_event_id === soundEventId ? update(event) : event,
   );
   return nextAsset;
-}
-
-function timelineRowFromSoundEvent(
-  event: SoundEvent,
-  track: SoundTrack,
-): TimelineRow {
-  return {
-    lane: soundLane(track),
-    label: event.description,
-    start_frame: event.start_frame_index,
-    end_frame: event.end_frame_index,
-    kind: track.track_type,
-    sound_event_id: event.sound_event_id,
-    sound_track_id: event.sound_track_id,
-    generation_model: track.generation_model,
-    spoken_text: event.spoken_text,
-  };
-}
-
-function soundLane(track: SoundTrack): string {
-  return `[${track.track_type}] ${track.label}`;
-}
-
-function normalizeCanonicalKey(value: string): string | null {
-  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  return normalized || null;
-}
-
-function makeId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function cloneAsset(asset: VideoAsset): VideoAsset {

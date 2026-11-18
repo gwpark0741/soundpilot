@@ -1,79 +1,41 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type FormEvent,
-  type PointerEvent,
-} from "react";
+import { useEffect, useMemo, useRef, type CSSProperties, type PointerEvent } from "react";
+import { methodLabel, objectColor, statusView } from "../lib/selection";
 import type {
-  AudioEventArtifact,
   AudioTrackArtifact,
-  GenerationModel,
   SoundTrack,
-  SoundTrackType,
   TimelineRow,
+  TrackStatus,
 } from "../types";
 
 interface TimelineProps {
   rows: TimelineRow[];
   soundTracks: SoundTrack[];
   audioTracks: AudioTrackArtifact[];
-  audioEvents: AudioEventArtifact[];
   assetVersion: number;
   frame: number;
   frameCount: number;
+  fps?: number;
   onSelectFrame: (frame: number) => void;
   onPlayTrackAudio?: (soundTrackId: string, startFrame: number) => void;
-  onPlayEventAudio?: (soundEventId: string, startFrame: number) => void;
-  onDeleteEventAudio?: (soundEventId: string) => void;
   onEditSoundEvent?: (
     soundEventId: string,
     startFrame: number,
     endFrame: number,
   ) => void;
-  onCreateSoundTrack?: (input: CreateSoundTrackInput) => void;
-  onDeleteSoundTrack?: (soundTrackId: string) => void;
-  onEditSoundTrackGenerationModel?: (
-    soundTrackId: string,
-    generationModel: GenerationModel,
-  ) => void;
-  onCreateSoundEvent?: (soundTrackId: string, startFrame: number) => void;
-  onDeleteSoundEvent?: (soundEventId: string) => void;
-  onEditSoundEventDescription?: (
-    soundEventId: string,
-    description: string,
-  ) => void;
   onEditSoundEventDetails?: (soundEventId: string) => void;
-}
-
-type LaneKind = "scene" | "tracking" | "visual" | "sound" | "audio";
-
-interface TimelineTooltip {
-  content: string;
-  x: number;
-  y: number;
-}
-
-export interface CreateSoundTrackInput {
-  trackType: SoundTrackType;
-  label: string;
-  generationModel: GenerationModel;
-  canonicalKey: string | null;
-}
-
-interface PackedTimelineRow extends TimelineRow {
-  depth: number;
+  selectedTrackId: string | null;
+  onSelectTrack: (trackId: string) => void;
+  soloTrackId: string | null;
+  onToggleSolo: (trackId: string) => void;
+  trackStatus?: Record<string, TrackStatus>;
+  appRunning: boolean;
+  trackColors?: Record<string, string>;
 }
 
 interface LaneGroup {
-  lane: string;
-  soundTrack?: SoundTrack;
-  soundTrackId?: string;
+  soundTrack: SoundTrack;
   audioTrack?: AudioTrackArtifact;
-  rows: PackedTimelineRow[];
-  depthCount: number;
+  rows: TimelineRow[];
 }
 
 interface ActiveDrag {
@@ -85,79 +47,43 @@ interface ActiveDrag {
   endFrame: number;
 }
 
-const laneToggles: { kind: LaneKind; label: string }[] = [
-  { kind: "scene", label: "Scenes" },
-  { kind: "tracking", label: "Tracking" },
-  { kind: "visual", label: "Visual" },
-  { kind: "sound", label: "Sound" },
-  { kind: "audio", label: "Audio" },
-];
-
-const generationModelOptions = (trackType: SoundTrackType): GenerationModel[] =>
-  trackType === "speech" ? ["tts"] : ["t2a", "v2a", "tts"];
+const NONE_COLOR = objectColor(-1);
+const NO_AUDIO_REASON = "Generate audio first.";
 
 export default function Timeline({
   rows,
   soundTracks,
   audioTracks,
-  audioEvents,
-  assetVersion,
   frame,
   frameCount,
+  fps = 30,
   onSelectFrame,
   onPlayTrackAudio,
-  onPlayEventAudio,
-  onDeleteEventAudio,
   onEditSoundEvent,
-  onCreateSoundTrack,
-  onDeleteSoundTrack,
-  onEditSoundTrackGenerationModel,
-  onCreateSoundEvent,
-  onDeleteSoundEvent,
-  onEditSoundEventDescription,
   onEditSoundEventDetails,
+  selectedTrackId,
+  onSelectTrack,
+  soloTrackId,
+  onToggleSolo,
+  trackStatus = {},
+  appRunning,
+  trackColors = {},
 }: TimelineProps) {
-  const [enabledKinds, setEnabledKinds] = useState<Record<LaneKind, boolean>>({
-    scene: true,
-    tracking: true,
-    visual: true,
-    sound: true,
-    audio: true,
-  });
   const dragRef = useRef<ActiveDrag | null>(null);
-  const [showCreateTrack, setShowCreateTrack] = useState(false);
-  const [trackType, setTrackType] = useState<SoundTrackType>("sfx");
-  const [generationModel, setGenerationModel] = useState<GenerationModel>("t2a");
-  const [trackLabel, setTrackLabel] = useState("");
-  const [canonicalKey, setCanonicalKey] = useState("");
-  const [tooltip, setTooltip] = useState<TimelineTooltip | null>(null);
   const audioByTrack = useMemo(
     () => new Map(audioTracks.map((item) => [item.sound_track_id, item])),
     [audioTracks],
   );
-  const audioByEvent = useMemo(
-    () => new Map(audioEvents.map((item) => [item.sound_event_id, item])),
-    [audioEvents],
-  );
-  const visibleRows = rows.filter((row) => {
-    const kind = rowKind(row);
-    if (kind === "sound") {
-      return enabledKinds.sound;
-    }
-    return enabledKinds[kind];
-  });
-  const lanes = groupRows(
-    visibleRows,
-    soundTracks,
-    audioByTrack,
-    enabledKinds.sound,
-    enabledKinds.audio,
-  );
+  const lanes = groupRows(rows, soundTracks, audioByTrack);
   const timelineEndFrame = Math.max(frameCount, maxRowEnd(rows), 1);
   const maxPlaybackFrame = Math.max(0, timelineEndFrame - 1);
   const clampedFrame = clamp(frame, 0, maxPlaybackFrame);
-  const playheadRatio = clampedFrame / Math.max(maxPlaybackFrame, 1);
-  const playheadLeft = `${playheadRatio * 100}%`;
+  const playheadLeft = `${(clampedFrame / Math.max(maxPlaybackFrame, 1)) * 100}%`;
+  const tickStep = Math.max(1, Math.ceil(timelineEndFrame / fps / 8));
+  const ticks: number[] = [];
+  for (let second = 0; second * fps < timelineEndFrame; second += tickStep) {
+    ticks.push(second);
+  }
 
   useEffect(() => {
     function handlePointerMove(event: globalThis.PointerEvent) {
@@ -213,8 +139,8 @@ export default function Timeline({
   }
 
   function startSoundEventEdit(
-    event: PointerEvent<HTMLDivElement>,
-    row: PackedTimelineRow,
+    event: PointerEvent<HTMLElement>,
+    row: TimelineRow,
   ) {
     if (!row.sound_event_id || !onEditSoundEvent) {
       return;
@@ -243,502 +169,180 @@ export default function Timeline({
     event.stopPropagation();
   }
 
-  function submitCreateTrack(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const label = trackLabel.trim();
-    if (!label || !onCreateSoundTrack) {
-      return;
-    }
-    const nextTrackType = generationModel === "tts" ? "speech" : trackType;
-    onCreateSoundTrack({
-      trackType: nextTrackType,
-      label,
-      generationModel: nextTrackType === "speech" ? "tts" : generationModel,
-      canonicalKey: canonicalKey.trim() || null,
-    });
-    setTrackLabel("");
-    setCanonicalKey("");
-    setShowCreateTrack(false);
-  }
-
-  function createEventInLane(event: PointerEvent<HTMLElement>, soundTrackId: string) {
-    if (!onCreateSoundEvent) {
-      return;
-    }
-    const rect = event.currentTarget.getBoundingClientRect();
-    const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    onCreateSoundEvent(soundTrackId, Math.round(ratio * timelineEndFrame));
-    event.preventDefault();
-    event.stopPropagation();
-  }
-
-
-  function showTooltip(content: string, x: number, y: number) {
-    setTooltip({ content, ...tooltipPosition(x, y) });
-  }
-
-  function moveTooltip(x: number, y: number) {
-    setTooltip((current) =>
-      current ? { ...current, ...tooltipPosition(x, y) } : current,
-    );
-  }
-
-  function hideTooltip() {
-    setTooltip(null);
-  }
-
   return (
-    <section className="timeline-panel">
-      <div className="timeline-header">
-        <h2>Timeline</h2>
-        <div className="timeline-header-actions">
-          <span>
-            {visibleRows.length}/{rows.length} items
-          </span>
-          <div className="timeline-toggles" aria-label="Timeline lane filters">
-            {laneToggles.map((toggle) => (
-              <button
-                className={enabledKinds[toggle.kind] ? "active" : ""}
-                key={toggle.kind}
-                onClick={() =>
-                  setEnabledKinds((current) => ({
-                    ...current,
-                    [toggle.kind]: !current[toggle.kind],
-                  }))
-                }
-                type="button"
-              >
-                {toggle.label}
-              </button>
-            ))}
-          </div>
-          <button
-            className={showCreateTrack ? "timeline-add-track active" : "timeline-add-track"}
-            disabled={!onCreateSoundTrack}
-            onClick={() => setShowCreateTrack((value) => !value)}
-            type="button"
-          >
-            + Sound Track
-          </button>
+    <section className="tl panel" aria-label="Timeline">
+      <div className="lane ruler">
+        <div className="lane-label-sp" />
+        <div
+          className="lane-track"
+          onPointerDown={selectFrame}
+          onPointerMove={(event) => {
+            if (event.buttons === 1) {
+              selectFrame(event);
+            }
+          }}
+        >
+          {ticks.map((second, index) => (
+            <span
+              className={`tick t${index}`}
+              key={second}
+              style={{ left: `${((second * fps) / timelineEndFrame) * 100}%` }}
+            >
+              {second} s
+            </span>
+          ))}
+          <span className="playhead" style={{ left: playheadLeft }} />
         </div>
       </div>
-      {showCreateTrack ? (
-        <form className="timeline-create-track" onSubmit={submitCreateTrack}>
-          <select
-            value={trackType}
-            aria-label="Track type"
-            onChange={(event) => {
-              const nextType = event.target.value as SoundTrackType;
-              setTrackType(nextType);
-              setGenerationModel(nextType === "speech" ? "tts" : "t2a");
-            }}
-          >
-            <option value="sfx">sfx</option>
-            <option value="ambience">ambience</option>
-            <option value="speech">speech</option>
-          </select>
-          <input
-            value={trackLabel}
-            onChange={(event) => setTrackLabel(event.target.value)}
-            aria-label="Track label"
-            placeholder="Track label"
-          />
-          <select
-            aria-label="Generation model"
-            value={trackType === "speech" ? "tts" : generationModel}
-            onChange={(event) => {
-              const nextModel = event.target.value as GenerationModel;
-              setGenerationModel(nextModel);
-              if (nextModel === "tts") {
-                setTrackType("speech");
-              }
-            }}
-          >
-            {generationModelOptions(trackType).map((model) => (
-              <option key={model} value={model}>
-                {model.toUpperCase()}
-              </option>
-            ))}
-          </select>
-          <input
-            value={canonicalKey}
-            onChange={(event) => setCanonicalKey(event.target.value)}
-            aria-label="Canonical key"
-            placeholder="canonical_key"
-          />
-          <button type="submit">Create</button>
-        </form>
-      ) : null}
-      <div className="timeline">
-        <div className="timeline-content">
-          <div className="timeline-playhead-area">
-            <div className="playhead-line" style={{ left: playheadLeft }} />
-          </div>
-          <div className="timeline-ruler-row">
-            <div className="timeline-label-spacer" />
+      {lanes.length === 0 ? (
+        <div className="empty-lane">Pipeline lanes will appear here.</div>
+      ) : (
+        lanes.map(({ soundTrack, audioTrack, rows: laneRows }) => {
+          const id = soundTrack.sound_track_id;
+          const selected = id === selectedTrackId;
+          const color = trackColors[id] ?? NONE_COLOR;
+          const none = color === NONE_COLOR;
+          const status = statusView(trackStatus[id], appRunning);
+          const method = methodLabel(soundTrack.generation_model);
+          const noAudioTitle = audioTrack ? undefined : NO_AUDIO_REASON;
+          return (
             <div
-              className="timeline-ruler"
-              onPointerDown={selectFrame}
-              onPointerMove={(event) => {
-                if (event.buttons === 1) {
-                  selectFrame(event);
-                }
-              }}
-            />
-          </div>
-          {lanes.length === 0 ? (
-            <div className="empty-lane">Pipeline lanes will appear here.</div>
-          ) : (
-            lanes.map(({ lane, soundTrack, soundTrackId, audioTrack, rows: laneRows, depthCount }) => (
-              <div className="lane" key={lane}>
-                <div className="lane-label" title={lane}>
-                  <span
-                    tabIndex={0}
-                    onMouseEnter={(event) => {
-                      showTooltip(
-                        trackInfoTooltip(soundTrack, lane, audioTrack),
-                        event.clientX,
-                        event.clientY,
-                      );
-                    }}
-                    onMouseMove={(event) => moveTooltip(event.clientX, event.clientY)}
-                    onMouseLeave={hideTooltip}
-                    onFocus={(event) => {
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      showTooltip(
-                        trackInfoTooltip(soundTrack, lane, audioTrack),
-                        rect.left,
-                        rect.bottom,
-                      );
-                    }}
-                    onBlur={hideTooltip}
-                  >
-                    {lane}
-                  </span>
-                  {soundTrackId ? (
-                    <div className="lane-actions">
-                      {soundTrack ? (
-                        <select
-                          aria-label={`Generation model for ${soundTrack.label}`}
-                          className="lane-model-select"
-                          onChange={(event) =>
-                            onEditSoundTrackGenerationModel?.(
-                              soundTrack.sound_track_id,
-                              event.target.value as GenerationModel,
-                            )
-                          }
-                          title="Track generation model"
-                          value={soundTrack.generation_model}
-                        >
-                          {generationModelOptions(soundTrack.track_type).map((model) => (
-                            <option key={model} value={model}>
-                              {model.toUpperCase()}
-                            </option>
-                          ))}
-                        </select>
-                      ) : null}
-                      {audioTrack ? (
-                        <button
-                          className="lane-play-button"
-                          title="Play track audio"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onPlayTrackAudio?.(soundTrackId, clampedFrame);
-                          }}
-                          type="button"
-                        >
-                          play
-                        </button>
-                      ) : null}
-                      {!(enabledKinds.audio && audioTrack) ? (
-                        <>
-                          <button
-                            title="Add sound event"
-                            onClick={() => onCreateSoundEvent?.(soundTrackId, clampedFrame)}
-                            type="button"
-                          >
-                            +
-                          </button>
-                          <button
-                            title="Delete sound track"
-                            onClick={() => onDeleteSoundTrack?.(soundTrackId)}
-                            type="button"
-                          >
-                            x
-                          </button>
-                        </>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-                <div
-                  className="lane-track"
-                  onMouseEnter={(event) => {
-                    if (enabledKinds.audio && audioTrack) {
-                      showTooltip(
-                        audioTrackTooltip(lane, audioTrack),
-                        event.clientX,
-                        event.clientY,
-                      );
-                    }
-                  }}
-                  onMouseMove={(event) => moveTooltip(event.clientX, event.clientY)}
-                  onMouseLeave={hideTooltip}
-                  onPointerDown={(event) => {
-                    if (event.detail === 2 && soundTrackId) {
-                      createEventInLane(event, soundTrackId);
-                      return;
-                    }
-                    selectFrame(event);
-                  }}
-                  onPointerMove={(event) => {
-                    if (event.buttons === 1 && !dragRef.current) {
-                      selectFrame(event);
-                    }
-                  }}
-                  style={{ minHeight: `${depthCount * 24 + 8}px` }}
+              className={selected ? "lane sel" : "lane"}
+              data-obj={none ? "none" : "object"}
+              key={id}
+              onClick={() => onSelectTrack(id)}
+              style={{ "--oc": color } as CSSProperties}
+            >
+              <div className="lane-head">
+                <button
+                  aria-current={selected ? "true" : "false"}
+                  className="lh-main"
+                  type="button"
                 >
-                  {enabledKinds.audio && audioTrack ? (
-                    <Waveform peaks={audioTrack.waveform_peaks} />
-                  ) : null}
-                  {laneRows.map((row, index) => {
-                    const kind = rowKind(row);
-                    const bar = barStyle(row, timelineEndFrame, kind);
-                    const editable = isEditableSoundRow(row) && !!onEditSoundEvent;
-                    const hasEventAudio = !!row.sound_event_id && audioByEvent.has(row.sound_event_id);
-                    const visualStyle =
-                      kind === "visual"
-                        ? ({ "--bar-color": visualEventColor(row.kind) } as CSSProperties)
-                        : {};
-                    const genPrefix = row.generation_model
-                      ? `[${row.generation_model.toUpperCase()}] `
-                      : "";
-                    const tooltipContent = soundEventTooltip(row, genPrefix, hasEventAudio);
-                    return (
-                      <div
-                        className={`bar bar-${kind} bar-${safeClass(row.kind)}${
-                          editable ? " bar-editable" : ""
-                        }${hasEventAudio ? " bar-has-audio" : ""}`}
-                        key={
-                          row.sound_event_id ??
-                          `${lane}-${row.start_frame}-${row.end_frame}-${index}`
-                        }
-                        onMouseEnter={(event) => {
-                          event.stopPropagation();
-                          showTooltip(tooltipContent, event.clientX, event.clientY);
-                        }}
-                        onMouseMove={(event) => {
-                          event.stopPropagation();
-                          moveTooltip(event.clientX, event.clientY);
-                        }}
-                        onMouseLeave={(event) => {
-                          event.stopPropagation();
-                          hideTooltip();
-                        }}
-                        onFocus={(event) => {
-                          const rect = event.currentTarget.getBoundingClientRect();
-                          showTooltip(tooltipContent, rect.left, rect.bottom);
-                        }}
-                        onBlur={hideTooltip}
-                        onPointerDown={
-                          editable
-                            ? (event) => startSoundEventEdit(event, row)
-                            : undefined
-                        }
-                        style={{
-                          left: `${bar.left}%`,
-                          width: `${bar.width}%`,
-                          top: `${row.depth * 24 + 4}px`,
-                          ...visualStyle,
-                        }}
-                        title={`${genPrefix}${row.label}: ${row.start_frame}-${row.end_frame}${hasEventAudio ? " audio ready" : ""}`}
-                        onDoubleClick={
-                          editable && onEditSoundEventDetails
-                            ? (event) => {
-                                event.stopPropagation();
-                                onEditSoundEventDetails(row.sound_event_id!);
-                              }
-                            : undefined
-                        }
+                  <span className="lh-name">
+                    <span
+                      aria-hidden="true"
+                      className={none ? "sw sw-none" : "sw"}
+                      style={none ? undefined : { background: color }}
+                    />
+                    {soundTrack.label}
+                  </span>
+                  <span className="lh-meta">
+                    <span
+                      className={
+                        soundTrack.generation_model === "separate"
+                          ? "badge badge-sep"
+                          : "badge badge-gen"
+                      }
+                    >
+                      {method}
+                    </span>
+                    {status.label && status.label !== "Done" ? (
+                      <span
+                        className={`st st-${
+                          status.tone === "run" ? "run" : status.tone === "wait" ? "queue" : "fail"
+                        }`}
                       >
-                        {editable && onDeleteSoundEvent ? (
-                          <span className="bar-actions">
-                            {hasEventAudio && onPlayEventAudio ? (
-                              <button
-                                className="bar-action-button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onPlayEventAudio(row.sound_event_id ?? "", row.start_frame);
-                                }}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                title="Play event audio"
-                                type="button"
-                              >
-                                p
-                              </button>
-                            ) : null}
-                            {hasEventAudio && onDeleteEventAudio ? (
-                              <button
-                                className="bar-action-button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onDeleteEventAudio(row.sound_event_id ?? "");
-                                }}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                title="Delete generated audio"
-                                type="button"
-                              >
-                                -
-                              </button>
-                            ) : null}
-                            {onEditSoundEventDescription ? (
-                              <button
-                                className="bar-action-button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  const nextDescription = window.prompt(
-                                    "Edit sound event description",
-                                    row.label,
-                                  );
-                                  const trimmed = nextDescription?.trim();
-                                  if (trimmed) {
-                                    onEditSoundEventDescription(
-                                      row.sound_event_id ?? "",
-                                      trimmed,
-                                    );
-                                  }
-                                }}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                title="Edit description"
-                                type="button"
-                              >
-                                e
-                              </button>
-                            ) : null}
-                            <button
-                              className="bar-action-button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                onDeleteSoundEvent(row.sound_event_id ?? "");
-                              }}
-                              onPointerDown={(event) => event.stopPropagation()}
-                              title="Delete sound event"
-                              type="button"
-                            >
-                              x
-                            </button>
-                          </span>
-                        ) : null}
-                        {editable ? (
-                          <span
-                            aria-hidden="true"
-                            className="bar-resize-handle bar-resize-left"
-                            data-handle="left"
-                          />
-                        ) : null}
-                        {bar.width < 2 ? "" : bar.width < 7 ? row.kind : row.label}
-                        {editable ? (
-                          <span
-                            aria-hidden="true"
-                            className="bar-resize-handle bar-resize-right"
-                            data-handle="right"
-                          />
-                        ) : null}
-                      </div>
-                    );
-                  })}
+                        {status.label}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+                <div className="ctl">
+                  <button
+                    aria-label={`Play ${soundTrack.label}`}
+                    className="btn sm ico"
+                    disabled={!audioTrack}
+                    onClick={() => onPlayTrackAudio?.(id, clampedFrame)}
+                    title={noAudioTitle}
+                    type="button"
+                  >
+                    <svg aria-hidden="true" className="ic" height="16" viewBox="0 0 16 16" width="16">
+                      <path d="M5.75 3.5v9l7-4.5z" />
+                    </svg>
+                  </button>
+                  <button
+                    aria-label={`Solo ${soundTrack.label}`}
+                    aria-pressed={soloTrackId === id}
+                    className="btn sm tog"
+                    disabled={!audioTrack}
+                    onClick={() => onToggleSolo(id)}
+                    title={noAudioTitle}
+                    type="button"
+                  >
+                    Solo
+                  </button>
                 </div>
               </div>
-            ))
-          )}
-        </div>
-      </div>
-      {tooltip ? (
-        <div
-          className="timeline-tooltip"
-          style={{ left: `${tooltip.x}px`, top: `${tooltip.y}px` }}
-        >
-          {tooltip.content}
-        </div>
-      ) : null}
+              <div
+                className="lane-track"
+                onPointerDown={selectFrame}
+                onPointerMove={(event) => {
+                  if (event.buttons === 1 && !dragRef.current) {
+                    selectFrame(event);
+                  }
+                }}
+              >
+                {audioTrack ? <Waveform peaks={audioTrack.waveform_peaks} /> : null}
+                {laneRows.map((row, index) => {
+                  const bar = barStyle(row, timelineEndFrame);
+                  const editable = !!row.sound_event_id && !!onEditSoundEvent;
+                  return (
+                    <button
+                      aria-label={`Edit ${row.label} event, frames ${row.start_frame} to ${row.end_frame}`}
+                      className={bar.width >= 50 ? "ev long" : "ev"}
+                      key={row.sound_event_id ?? `${id}-${row.start_frame}-${row.end_frame}-${index}`}
+                      onDoubleClick={
+                        row.sound_event_id && onEditSoundEventDetails
+                          ? (event) => {
+                              event.stopPropagation();
+                              onEditSoundEventDetails(row.sound_event_id!);
+                            }
+                          : undefined
+                      }
+                      onPointerDown={editable ? (event) => startSoundEventEdit(event, row) : undefined}
+                      style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
+                      tabIndex={-1}
+                      title={`${row.label}: ${row.start_frame}-${row.end_frame}`}
+                      type="button"
+                    >
+                      {editable ? (
+                        <>
+                          <span aria-hidden="true" className="ev-handle ev-handle-left" data-handle="left" />
+                          <span aria-hidden="true" className="ev-handle ev-handle-right" data-handle="right" />
+                        </>
+                      ) : null}
+                    </button>
+                  );
+                })}
+                <span className="playhead" style={{ left: playheadLeft }} />
+              </div>
+            </div>
+          );
+        })
+      )}
     </section>
   );
 }
 
-function tooltipPosition(x: number, y: number): { x: number; y: number } {
-  const margin = 16;
-  const width = 420;
-  const height = 180;
-  const viewportWidth = window.innerWidth || width + margin * 2;
-  const viewportHeight = window.innerHeight || height + margin * 2;
-  return {
-    x: clamp(x + 14, margin, Math.max(margin, viewportWidth - width - margin)),
-    y: clamp(y + 14, margin, Math.max(margin, viewportHeight - height - margin)),
-  };
-}
-
-function trackInfoTooltip(
-  track: SoundTrack | undefined,
-  lane: string,
-  audioTrack: AudioTrackArtifact | undefined,
-): string {
-  const lines = [lane];
-  if (track) {
-    lines.push(`Track type: ${track.track_type}`);
-    lines.push(`Generation model: ${track.generation_model}`);
-    if (track.canonical_key) {
-      lines.push(`Canonical key: ${track.canonical_key}`);
-    }
-  }
-  if (audioTrack) {
-    lines.push("Audio: generated track stem");
-    lines.push(`Duration: ${audioTrack.duration_sec.toFixed(2)}s`);
-    lines.push(`Events: ${audioTrack.event_count}`);
-  } else {
-    lines.push("Audio: not generated");
-  }
-  return lines.join("\n");
-}
-
-function audioTrackTooltip(lane: string, artifact: AudioTrackArtifact): string {
-  const label = artifact.track_label || lane;
-  const type = artifact.track_type ? `Type: ${artifact.track_type}` : null;
-  const duration = `Duration: ${artifact.duration_sec.toFixed(2)}s`;
-  const events = `Events: ${artifact.event_count}`;
-  return [label, type, duration, events, "Generated track stem"].filter(Boolean).join("\n");
-}
-
-function soundEventTooltip(
-  row: TimelineRow,
-  generationPrefix: string,
-  hasEventAudio: boolean,
-): string {
-  const generation = generationPrefix
-    ? `Generation: ${generationPrefix.replace(/[\[\] ]/g, "")}`
-    : "Generation: not assigned";
-  return [
-    row.label,
-    `Frames: ${row.start_frame}-${row.end_frame}`,
-    generation,
-    hasEventAudio ? "Audio: ready" : "Audio: not generated",
-  ].join("\n");
-}
-
 function Waveform({ peaks }: { peaks: number[] }) {
   if (peaks.length === 0) {
-    return <div className="waveform waveform-empty" />;
+    return null;
   }
-  const sampledPeaks = peaks.length > 384 ? samplePeaks(peaks, 384) : peaks;
+  const sampled = peaks.length > 384 ? samplePeaks(peaks, 384) : peaks;
+  const top = sampled.map((peak, index) => `${index},${(12 - clamp(peak, 0, 1) * 11.5).toFixed(1)}`);
+  const bottom = sampled
+    .map((peak, index) => `${index},${(12 + clamp(peak, 0, 1) * 11.5).toFixed(1)}`)
+    .reverse();
   return (
-    <div className="waveform" aria-hidden="true">
-      {sampledPeaks.map((peak, index) => (
-        <span
-          className="waveform-bar"
-          key={index}
-          style={{ height: `${Math.max(3, peak * 100)}%` }}
-        />
-      ))}
-    </div>
+    <svg
+      aria-hidden="true"
+      className="wave"
+      preserveAspectRatio="none"
+      viewBox={`0 0 ${Math.max(sampled.length - 1, 1)} 24`}
+    >
+      <polygon points={[...top, ...bottom].join(" ")} />
+    </svg>
   );
 }
 
@@ -746,51 +350,17 @@ function groupRows(
   rows: TimelineRow[],
   soundTracks: SoundTrack[],
   audioByTrack: Map<string, AudioTrackArtifact>,
-  showSound: boolean,
-  showAudio: boolean,
 ): LaneGroup[] {
-  const lanes = new Map<string, TimelineRow[]>();
-  for (const row of rows) {
-    if (rowKind(row) === "sound") {
-      continue;
-    }
-    if (!lanes.has(row.lane)) {
-      lanes.set(row.lane, []);
-    }
-    lanes.get(row.lane)?.push(row);
-  }
-  for (const track of soundTracks) {
-    const trackId = track.sound_track_id;
-    if (!showSound && !(showAudio && audioByTrack.has(trackId))) {
-      continue;
-    }
-    const lane = soundLane(track);
-    if (!lanes.has(lane)) {
-      lanes.set(lane, []);
-    }
-  }
-  for (const row of rows) {
-    if (rowKind(row) !== "sound") {
-      continue;
-    }
-    if (!lanes.has(row.lane)) {
-      lanes.set(row.lane, []);
-    }
-    lanes.get(row.lane)?.push(row);
-  }
-  return [...lanes.entries()].map(([lane, laneRows]) => {
-    const packedRows = packLaneRows(laneRows);
-    const depthCount =
-      packedRows.reduce((maxDepth, row) => Math.max(maxDepth, row.depth), 0) + 1;
-    const soundTrack = soundTracks.find((track) => soundLane(track) === lane);
-    const soundTrackId = soundTrack?.sound_track_id;
+  return soundTracks.map((soundTrack) => {
+    const lane = soundLane(soundTrack);
     return {
-      lane,
       soundTrack,
-      soundTrackId,
-      audioTrack: soundTrackId ? audioByTrack.get(soundTrackId) : undefined,
-      rows: packedRows,
-      depthCount,
+      audioTrack: audioByTrack.get(soundTrack.sound_track_id),
+      rows: rows.filter(
+        (row) =>
+          isSoundRow(row) &&
+          (row.sound_track_id === soundTrack.sound_track_id || row.lane === lane),
+      ),
     };
   });
 }
@@ -799,57 +369,23 @@ function soundLane(track: SoundTrack): string {
   return `[${track.track_type}] ${track.label}`;
 }
 
-function packLaneRows(rows: TimelineRow[]): PackedTimelineRow[] {
-  const depthEndFrames: number[] = [];
-  return [...rows]
-    .sort(
-      (left, right) =>
-        left.start_frame - right.start_frame || left.end_frame - right.end_frame,
-    )
-    .map((row) => {
-      const depth = depthEndFrames.findIndex((endFrame) => endFrame <= row.start_frame);
-      const nextDepth = depth === -1 ? depthEndFrames.length : depth;
-      depthEndFrames[nextDepth] = row.end_frame;
-      return { ...row, depth: nextDepth };
-    });
-}
-
-function rowKind(row: TimelineRow): Exclude<LaneKind, "audio"> {
-  if (row.kind === "scene") {
-    return "scene";
-  }
-  if (row.kind === "track") {
-    return "tracking";
-  }
-  if (row.lane.startsWith("visual: ")) {
-    return "visual";
-  }
-  return "sound";
-}
-
-function isEditableSoundRow(row: TimelineRow): boolean {
-  return rowKind(row) === "sound" && !!row.sound_event_id;
+function isSoundRow(row: TimelineRow): boolean {
+  return row.kind !== "scene" && row.kind !== "track" && !row.lane.startsWith("visual: ");
 }
 
 function maxRowEnd(rows: TimelineRow[]): number {
   return rows.reduce((maxEnd, row) => Math.max(maxEnd, row.end_frame), 0);
 }
 
-function safeClass(value: string): string {
-  return value.replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
-}
-
 function barStyle(
   row: TimelineRow,
   timelineEndFrame: number,
-  kind: Exclude<LaneKind, "audio">,
 ): { left: number; width: number } {
   const start = clamp(row.start_frame, 0, timelineEndFrame);
   const end = clamp(row.end_frame, start, timelineEndFrame);
   const left = (start / timelineEndFrame) * 100;
   const rawWidth = ((end - start) / timelineEndFrame) * 100;
-  const minWidth = kind === "sound" ? 0.12 : 0.4;
-  const width = Math.min(100 - left, Math.max(minWidth, rawWidth));
+  const width = Math.min(100 - left, Math.max(0.12, rawWidth));
   return { left, width };
 }
 
@@ -868,25 +404,4 @@ function samplePeaks(peaks: number[], targetCount: number): number[] {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
-}
-
-function visualEventColor(kind: string): string {
-  const colors: Record<string, string> = {
-    contact: "#cf4e4e",
-    collision: "#d55f38",
-    occlusion: "#8d6fd1",
-    motion: "#2f8f72",
-    interaction: "#c2872f",
-    gesture: "#3f7bd4",
-    state_change: "#b64f9f",
-  };
-  return colors[kind] ?? `hsl(${hashKind(kind)} 68% 42%)`;
-}
-
-function hashKind(value: string): number {
-  let hash = 0;
-  for (const char of value) {
-    hash = (hash * 31 + char.charCodeAt(0)) % 360;
-  }
-  return hash;
 }

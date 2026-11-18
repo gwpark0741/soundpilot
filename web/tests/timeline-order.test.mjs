@@ -62,6 +62,6 @@ test("sound lanes keep the sound track order", async (context) => {
   );
 
   assert.ok(
-    html.indexOf("[sfx] First track") < html.indexOf("[sfx] Second track"),
+    html.indexOf("First track") < html.indexOf("Second track"),
   );
 });
