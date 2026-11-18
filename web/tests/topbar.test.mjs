@@ -68,7 +68,9 @@ test("TopBar shows the input badge, status line and a single primary button", as
   assert.ok(idle.indexOf('role="radiogroup"') < idle.indexOf('class="btn primary"'));
 
   const silent = render({ hasAudio: false });
-  assert.match(silent, /<button[^>]*role="radio"[^>]*disabled[^>]*title="No original audio to separate\."[^>]*>Separate</);
+  assert.match(silent, /<button[^>]*role="radio"[^>]*disabled=""[^>]*aria-describedby="no-audio-why"[^>]*>Separate</);
+  assert.match(silent, /<span class="mode-why" id="no-audio-why">No original audio to separate\.<\/span>/);
+  assert.doesNotMatch(idle, /No original audio to separate/);
   assert.doesNotMatch(silent, /<button[^>]*role="radio"[^>]*disabled[^>]*>Generate</);
 
   const separate = render({ audioMode: "separate" });

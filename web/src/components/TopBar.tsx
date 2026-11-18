@@ -110,24 +110,31 @@ export default function TopBar({
           ) : null}
         </div>
       </div>
-      <div className="modes" role="radiogroup" aria-label="Audio method">
-        {MODES.map(({ mode, label }) => {
-          const noAudio = mode === "separate" && hasAudio === false;
-          return (
-            <button
-              key={mode}
-              type="button"
-              role="radio"
-              aria-checked={audioMode === mode}
-              className="btn"
-              disabled={running || noAudio}
-              title={noAudio ? "No original audio to separate." : undefined}
-              onClick={() => onSetMode(mode)}
-            >
-              {label}
-            </button>
-          );
-        })}
+      <div className="mode-pick">
+        <div className="modes" role="radiogroup" aria-label="Audio method">
+          {MODES.map(({ mode, label }) => {
+            const noAudio = mode === "separate" && hasAudio === false;
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={audioMode === mode}
+                className="btn"
+                disabled={running || noAudio}
+                aria-describedby={noAudio ? "no-audio-why" : undefined}
+                onClick={() => onSetMode(mode)}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {hasAudio === false ? (
+          <span className="mode-why" id="no-audio-why">
+            No original audio to separate.
+          </span>
+        ) : null}
       </div>
       <button className="btn primary" type="button" disabled={running || !canGenerate} onClick={onGenerate}>
         {running ? "Generating…" : action}

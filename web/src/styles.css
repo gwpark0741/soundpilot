@@ -61,6 +61,8 @@ h1, h2, h3, p { margin: 0; }
 .top h1 { font-size: 0.9375rem; font-weight: 650; letter-spacing: -0.01em; }
 .brand { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-inline-end: 4px; }
 .top-btns { display: flex; gap: 8px; }
+.mode-pick { display: flex; flex-direction: column; gap: 2px; }
+.mode-why { color: var(--muted); font-size: 0.75rem; line-height: 1.2; }
 .modes { display: flex; gap: 4px; }
 .modes .btn { min-height: 26px; padding: 0 10px; font-size: 0.8125rem; border-radius: var(--r-ctl); }
 .modes .btn[aria-checked="true"] { background: #2b3040; border-color: var(--text); font-weight: 600; }
@@ -214,7 +216,7 @@ h1, h2, h3, p { margin: 0; }
   .top > .btn.primary { flex: 1 1 100%; }
   .top .top-btns { flex: 1 1 100%; }
   .top .top-btns .btn { flex: 1; }
-  .top .modes { flex: 1 1 100%; }
+  .top .mode-pick { flex: 1 1 100%; }
   .top .modes .btn { flex: 1; }
   .tick.t1, .tick.t3, .tick.t5, .tick.t7 { display: none; }
 }
