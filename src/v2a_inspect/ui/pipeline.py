@@ -825,7 +825,7 @@ async def _generate_track_stem(
     short = str(track.sound_track_id)[:8]
     if method == "separate":
         if video_asset.original_audio_path is None:
-            raise ValueError("원본 오디오가 없어 분리할 수 없습니다. 생성으로 바꾸세요.")
+            raise ValueError("No original audio to separate.")
         attempt = 1 if attempt is None else attempt
         out_path = out_dir / f"{short}_separate_{attempt}.wav"
         await asyncio.to_thread(

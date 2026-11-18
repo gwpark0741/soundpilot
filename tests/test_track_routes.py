@@ -146,6 +146,7 @@ class TrackRouteTest(unittest.TestCase):
                 )
 
             self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()["detail"], "No original audio to separate.")
             p.assert_not_called()
 
     def test_generate_on_speech_track_queues(self) -> None:
@@ -199,6 +200,7 @@ class TrackRouteTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             asset, track = _asset(Path(temp_dir), has_audio=True)
             client, store = self._client(asset)
+            version = asyncio.run(store.snapshot()).asset_version
 
             def tracks():
                 return asyncio.run(store.snapshot()).asset.sound_timeline.sound_tracks
@@ -207,6 +209,7 @@ class TrackRouteTest(unittest.TestCase):
             self.assertEqual(response.json(), {"status": "ok"})
             snapshot = asyncio.run(store.snapshot())
             self.assertEqual(snapshot.status, "complete")
+            self.assertEqual(snapshot.asset_version, version)  # media must not reload
             self.assertEqual(snapshot.asset.audio_mode, "separate")
             (routed,) = tracks()
             self.assertEqual((routed.generation_model, routed.agent_model), ("separate", "v2a"))

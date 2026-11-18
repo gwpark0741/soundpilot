@@ -219,7 +219,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         if method == "separate" and not asset.has_audio:
             raise HTTPException(
                 status_code=422,
-                detail="원본 오디오가 없어 분리할 수 없습니다. 생성으로 바꾸세요.",
+                detail="No original audio to separate.",
             )
         background_tasks.add_task(
             run_track_regeneration_pipeline,
@@ -255,10 +255,12 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         update: dict[str, object] = {"audio_mode": mode}
         if timeline is not None:
             update["sound_timeline"] = routed
-        # No background job follows, so finish the mutation (publish alone stays "running").
-        await store.set_complete_asset(
-            asset.model_copy(update=update), stage="changed audio mode"
+        # No background job follows: publish without bumping asset_version (media
+        # stays loaded), then finish (publish alone leaves the status "running").
+        await store.publish_asset_mutation(
+            asset.model_copy(update=update), stage="changing audio mode"
         )
+        await store.set_complete(stage=f"Audio mode: {mode.capitalize()}")
         return {"status": "ok"}
 
     @router.post("/api/audio/residual")
