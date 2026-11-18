@@ -61,8 +61,10 @@ def generate_sfx_elevenlabs(
     """Generate sound effects using ElevenLabs API."""
     api_key = get_settings().elevenlabs_api_key
     if api_key is None:
-        logger.warning("ELEVENLABS_API_KEY not found. Falling back to dummy audio.")
-        return generate_dummy_audio(duration or 1.0, out_path)
+        raise RuntimeError(
+            "ELEVENLABS_API_KEY is not set. Add it to .env or switch this track to "
+            "SelVA w/ SelSync."
+        )
 
     try:
         client = ElevenLabs(api_key=api_key.get_secret_value())
@@ -154,45 +156,41 @@ def generate_audio_for_item(
     fps: float = 30.0,
     spoken_text: str | None = None,
     server_url: str | None = None,
-) -> str | None:
+) -> str:
     """Route one audio item to its explicitly selected generation model."""
-    try:
-        generation_model = {
-            "tta": "t2a",
-            "vta": "v2a",
-            "hybrid": "t2a",
-            "unknown": "t2a",
-        }.get(generation_model, generation_model)
+    generation_model = {
+        "tta": "t2a",
+        "vta": "v2a",
+        "hybrid": "t2a",
+        "unknown": "t2a",
+    }.get(generation_model, generation_model)
 
-        if kind in ("dialogue", "speech"):
-            generation_model = "tts"
+    if kind in ("dialogue", "speech"):
+        generation_model = "tts"
 
-        if generation_model == "tts":
-            if kind not in ("dialogue", "speech"):
-                raise ValueError("TTS generation requires speech kind")
-            text = (spoken_text or description).strip()
-            if not text:
-                raise ValueError("TTS generation requires spoken_text")
-            return generate_speech_kokoro(text, out_path, duration, server_url)
+    if generation_model == "tts":
+        if kind not in ("dialogue", "speech"):
+            raise ValueError("TTS generation requires speech kind")
+        text = (spoken_text or description).strip()
+        if not text:
+            raise ValueError("TTS generation requires spoken_text")
+        return generate_speech_kokoro(text, out_path, duration, server_url)
 
-        if generation_model == "v2a":
-            if not video_id or not time:
-                raise ValueError("V2A generation requires video_id and time")
-            return generate_v2a_hunyuan(
-                video_id,
-                fps,
-                time,
-                description,
-                out_path,
-                duration,
-                server_url,
-            )
+    if generation_model == "v2a":
+        if not video_id or not time:
+            raise ValueError("V2A generation requires video_id and time")
+        return generate_v2a_hunyuan(
+            video_id,
+            fps,
+            time,
+            description,
+            out_path,
+            duration,
+            server_url,
+        )
 
-        if generation_model != "t2a":
-            raise ValueError(f"Unsupported generation model: {generation_model}")
-        if kind in ("sfx", "ambience"):
-            return generate_sfx_elevenlabs(description, out_path, duration=duration)
-        raise ValueError(f"Unsupported sound type for T2A: {kind}")
-    except Exception as exc:
-        logger.error("Audio generation failed for '%s': %s", kind, exc)
-        return None
+    if generation_model != "t2a":
+        raise ValueError(f"Unsupported generation model: {generation_model}")
+    if kind in ("sfx", "ambience"):
+        return generate_sfx_elevenlabs(description, out_path, duration=duration)
+    raise ValueError(f"Unsupported sound type for T2A: {kind}")

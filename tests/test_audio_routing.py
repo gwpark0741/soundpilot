@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from v2a_inspect.audio_generation.client import generate_audio_for_item
+from v2a_inspect.audio_generation.client import (
+    generate_audio_for_item,
+    generate_sfx_elevenlabs,
+)
 
 
 class AudioRoutingTest(unittest.TestCase):
@@ -57,29 +62,56 @@ class AudioRoutingTest(unittest.TestCase):
 
     @patch("v2a_inspect.audio_generation.client.generate_sfx_elevenlabs")
     def test_v2a_does_not_fall_back_to_t2a(self, generate_sfx) -> None:
-        result = generate_audio_for_item(
-            kind="sfx",
-            description="A visible impact",
-            out_path="impact.wav",
-            duration=0.2,
-            generation_model="v2a",
-        )
+        with self.assertRaises(ValueError):
+            generate_audio_for_item(
+                kind="sfx",
+                description="A visible impact",
+                out_path="impact.wav",
+                duration=0.2,
+                generation_model="v2a",
+            )
 
-        self.assertIsNone(result)
         generate_sfx.assert_not_called()
 
     @patch("v2a_inspect.audio_generation.client.generate_speech_kokoro")
     def test_tts_rejects_non_speech(self, generate_speech) -> None:
-        result = generate_audio_for_item(
-            kind="sfx",
-            description="A visible impact",
-            out_path="impact.wav",
-            duration=0.2,
-            generation_model="tts",
-        )
+        with self.assertRaises(ValueError):
+            generate_audio_for_item(
+                kind="sfx",
+                description="A visible impact",
+                out_path="impact.wav",
+                duration=0.2,
+                generation_model="tts",
+            )
 
-        self.assertIsNone(result)
         generate_speech.assert_not_called()
+
+    @patch(
+        "v2a_inspect.audio_generation.client.generate_sfx_elevenlabs",
+        side_effect=RuntimeError("quota"),
+    )
+    def test_generation_error_propagates(self, _generate_sfx) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            generate_audio_for_item(
+                kind="sfx",
+                description="A distant dog bark",
+                out_path="sfx.wav",
+                duration=1.0,
+                generation_model="t2a",
+            )
+
+        self.assertIn("quota", str(ctx.exception))
+
+    @patch("v2a_inspect.audio_generation.client.get_settings")
+    def test_missing_elevenlabs_key_raises(self, get_settings) -> None:
+        get_settings.return_value.elevenlabs_api_key = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out = Path(temp_dir) / "x.wav"
+            with self.assertRaises(RuntimeError) as ctx:
+                generate_sfx_elevenlabs("x", str(out), 1.0)
+
+            self.assertIn("ELEVENLABS_API_KEY", str(ctx.exception))
+            self.assertFalse(out.exists())
 
 
 if __name__ == "__main__":

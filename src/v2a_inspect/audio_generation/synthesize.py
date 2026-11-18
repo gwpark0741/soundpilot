@@ -165,19 +165,20 @@ def synthesize(
         typer.echo(
             f"  [{i}/{n_items}] {item.item_id} ({item.type}, {item.time[0]}s-{item.time[1]}s): {item.description}",
         )
-        audio_file = generate_audio_for_item(
-            kind=item.type,
-            description=item.description,
-            out_path=out_path,
-            duration=duration,
-            video_id=video_id,
-            fps=fps,
-            time=item.time,
-            generation_model=item.generation_model,
-            spoken_text=item.spoken_text,
-        )
-        if audio_file:
-            generated_audio[item.item_id] = audio_file
+        try:
+            generated_audio[item.item_id] = generate_audio_for_item(
+                kind=item.type,
+                description=item.description,
+                out_path=out_path,
+                duration=duration,
+                video_id=video_id,
+                fps=fps,
+                time=item.time,
+                generation_model=item.generation_model,
+                spoken_text=item.spoken_text,
+            )
+        except Exception as exc:  # noqa: BLE001 - report and continue with other items.
+            typer.echo(f"    Failed: {exc}", err=True)
 
     n_generated = len(generated_audio)
     typer.echo(f"  → Generated {n_generated}/{n_items} audio files.", err=True)

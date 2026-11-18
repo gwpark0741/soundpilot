@@ -136,6 +136,45 @@ class UiAudioEventTest(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_regenerate_reports_generation_error(self) -> None:
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                track = SoundTrack(track_type="speech", label="Narrator")
+                event = SoundEvent(
+                    sound_track_id=track.sound_track_id,
+                    start_frame_index=0,
+                    end_frame_index=30,
+                    description="Voice direction",
+                    spoken_text="A line",
+                )
+                asset = VideoAsset(
+                    source_path=root / "video.mp4",
+                    frame_count=30,
+                    sound_timeline=SoundTimeline(
+                        sound_tracks=[track],
+                        sound_events=[event],
+                    ),
+                )
+                store = VideoAssetStore()
+                with patch(
+                    "v2a_inspect.ui.pipeline.generate_audio_for_item",
+                    side_effect=RuntimeError("server 500: boom"),
+                ):
+                    await run_event_audio_regeneration_pipeline(
+                        asset,
+                        store,
+                        str(event.sound_event_id),
+                        "Voice direction",
+                        "A line",
+                        None,
+                    )
+
+                snapshot = await store.snapshot()
+                self.assertIn("server 500: boom", snapshot.error)
+
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()

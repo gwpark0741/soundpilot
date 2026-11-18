@@ -305,6 +305,7 @@ async def run_audio_generation_pipeline(
         n_items = len(audio_plan.items)
 
         event_artifacts: list[SoundEventAudioArtifact] = []
+        errors: list[str] = []
 
         for i, item in enumerate(audio_plan.items, 1):
             context = item_context.get(item.item_id)
@@ -316,20 +317,22 @@ async def run_audio_generation_pipeline(
             event_path = _event_audio_path(event_dir, item.item_id, track.label)
             raw_path = event_path.with_name(f".{event_path.stem}.generated.wav")
 
-            audio_file = await asyncio.to_thread(
-                generate_audio_for_item,
-                kind=item.type,
-                description=item.description,
-                out_path=str(raw_path),
-                duration=duration,
-                video_id=video_id,
-                fps=fps,
-                time=item.time,
-                generation_model=item.generation_model,
-                spoken_text=item.spoken_text,
-                server_url=server_url,
-            )
-            if not audio_file:
+            try:
+                audio_file = await asyncio.to_thread(
+                    generate_audio_for_item,
+                    kind=item.type,
+                    description=item.description,
+                    out_path=str(raw_path),
+                    duration=duration,
+                    video_id=video_id,
+                    fps=fps,
+                    time=item.time,
+                    generation_model=item.generation_model,
+                    spoken_text=item.spoken_text,
+                    server_url=server_url,
+                )
+            except Exception as exc:  # noqa: BLE001 - collect per-item failures.
+                errors.append(f"{track.label}: {exc}")
                 continue
 
             normalized = await asyncio.to_thread(
@@ -354,7 +357,7 @@ async def run_audio_generation_pipeline(
             )
 
         if not event_artifacts:
-            raise ValueError("No audio files were generated.")
+            raise ValueError("No audio files were generated. " + "; ".join(errors))
 
         video_asset = await _rebuild_audio_outputs(
             video_asset, audio_plan, event_artifacts, store
@@ -520,9 +523,6 @@ async def _generate_event_audio_artifact(
         spoken_text=item.spoken_text,
         server_url=server_url,
     )
-    if not audio_file:
-        return None
-
     normalized = await asyncio.to_thread(
         _convert_audio_to_wav,
         Path(audio_file),
