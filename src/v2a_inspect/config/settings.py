@@ -183,6 +183,22 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("ELEVENLABS_API_KEY"),
     )
+    audyssey_tools_url: str = Field(
+        default="http://127.0.0.1:8700",
+        validation_alias=AliasChoices("V2A_INSPECT_AUDYSSEY_TOOLS_URL"),
+    )
+    audyssey_tool_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("V2A_INSPECT_AUDYSSEY_TOOL_TOKEN"),
+    )
+    selsync_seed: int = Field(
+        default=42,
+        validation_alias=AliasChoices("V2A_INSPECT_SELSYNC_SEED"),
+    )
+    track_description_default: Literal["label", "first_event"] = Field(
+        default="label",
+        validation_alias=AliasChoices("V2A_INSPECT_TRACK_DESCRIPTION_DEFAULT"),
+    )
     agent_sound_timeline_recursion_limit: int = Field(
         default=500,
         ge=1,
