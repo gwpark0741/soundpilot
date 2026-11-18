@@ -245,20 +245,18 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         asset = snapshot.asset
         if asset is None:
             raise HTTPException(status_code=404, detail="No video asset loaded")
-        timeline = asset.sound_timeline
-        try:
-            routed = route_tracks(
-                timeline or SoundTimeline(), mode=mode, has_audio=asset.has_audio
+        try:  # validation only: tracks (and their audio) stay as is until the next full run
+            route_tracks(
+                asset.sound_timeline or SoundTimeline(),
+                mode=mode,
+                has_audio=asset.has_audio,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        update: dict[str, object] = {"audio_mode": mode}
-        if timeline is not None:
-            update["sound_timeline"] = routed
         # No background job follows: publish without bumping asset_version (media
         # stays loaded), then finish (publish alone leaves the status "running").
         await store.publish_asset_mutation(
-            asset.model_copy(update=update), stage="changing audio mode"
+            asset.model_copy(update={"audio_mode": mode}), stage="changing audio mode"
         )
         await store.set_complete(stage=f"Audio mode: {mode.capitalize()}")
         return {"status": "ok"}
