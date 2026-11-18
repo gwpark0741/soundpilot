@@ -15,6 +15,9 @@ uv run --project server v2a-inspect-server serve
 
 `V2A_SERVER_HOST` and `V2A_SERVER_PORT` configure the bind address. Other model
 and cache options are documented in the root `.env.example`.
+`V2A_SERVER_HUNYUAN_ENABLED=false` skips loading Hunyuan at startup (the demo
+compose does this). `V2A_SERVER_API_TOKEN` enables Bearer auth; the client side
+sends `V2A_INSPECT_CLIENT_SERVER_TOKEN`. Blank means no auth.
 
 ## Endpoints
 
