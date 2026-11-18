@@ -90,3 +90,18 @@
 1. `uv run --project gpu --locked ...`가 시작 전에 실패: `antlr4-python3-runtime` 빌드 중 uv 캐시(`/home/common/uv`) 읽기 권한 오류. `--no-sync`로 기존 venv를 그대로 써서 우회했습니다 (venv는 수정하지 않음).
 2. `gpu/.venv`에 `selva`(git 의존성)가 없어 `/generate`가 500 (`real.py:75`, `import_module("selva.utils.eval_utils")`). 이 때문에 selsync 전환이 `failed` (`Audyssey generate failed (500)`)로 끝남. 코드와 venv를 고치지 않고, 이미지 `audyssey-tools:demo-1117`로 바꿔 재측정했습니다. 이미지에서는 생성 오류 없음.
 3. 이 문서 외 코드 변경 없음. 측정용 스크립트와 로그는 `work/task11/`에 있습니다 (`tools.log`는 venv, `tools-docker.log`는 docker).
+
+## LLM 비교: 사운드 타임라인 에이전트 (large 모델, 2026-11-18)
+
+샘플(7.1초) 1개, 모델당 1회, thinking level low. 추적·장면 분석은 샘플에 있는 결과를 그대로 썼다. 물체: #2 플레이어, #3 싸우는 적, #1·#4 배경 생물(bbox 움직임과 정지 화면으로 확인).
+
+| 모델 | 시간 | 토큰(입력/출력) | 원천/트랙/이벤트 | 물체 연결 |
+|---|---|---|---|---|
+| gemini-3.5-flash (이전 기본값) | 26초 | 67k / 1.1k | 3 / 3 / 3 | #2, #3 맞음 |
+| gemini-3.1-pro-preview | 56초 | 50k / 0.8k | 1 / 1 / 1 | 없음 |
+| gemini-3.8-flash | 244초 | 1,089k / 4.2k | 3 / 6 / 12 | #2, #3 맞음 |
+| **gemini-4-hydrogen (선택)** | 48초 | 67k / 2.7k | 3 / 4 / 6 | #2, #3 맞음 |
+
+- 3.5-flash는 트랙마다 전 구간 이벤트 1개라 타격·휘두르기를 잡지 못했다. 3.8-flash가 가장 풍부하지만 약 9배 느리다. 4-hydrogen은 비용이 3.5-flash와 비슷하면서 타격·휘두르기·발소리를 나눠 잡는다(시점은 대략적).
+- 선택: `gemini-4-hydrogen`. 문서 없는 코드명 모델이라 시연 당일 쓸 수 없으면 `gemini-3.5-flash`로 바꾼다.
+- 1회씩만 돌렸다. 시연 영상이 정해지면 선택 모델로 2~3회 더 돌려 안정성을 확인한다.

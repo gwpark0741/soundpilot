@@ -79,7 +79,7 @@ class Settings(BaseSettings):
         ),
     )
     llm_large_model: str = Field(
-        default="gemini-3.5-flash",
+        default="gemini-4-hydrogen",
         validation_alias=AliasChoices(
             "V2A_INSPECT_LLM_LARGE_MODEL",
             "V2A_LLM_LARGE_MODEL",
