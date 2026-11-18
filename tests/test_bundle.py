@@ -44,6 +44,20 @@ def test_roundtrip_rewrites_paths(tmp_path):
         assert p.is_relative_to(new) and p.exists()
 
 
+def test_roundtrip_relative_paths(tmp_path, monkeypatch):
+    # A local `v2a ui` with a relative work dir stores cwd-relative paths.
+    monkeypatch.chdir(tmp_path)
+    old = Path("a") / "v2a-inspect-ui"
+    new = tmp_path / "b" / "v2a-inspect-ui"
+    asset = _asset(old)
+    buf = io.BytesIO()
+    write_bundle(asset, old, buf)
+    buf.seek(0)
+    out = read_bundle(buf, new)
+    for p in [out.source_path, out.residual_path, *out.separated_stem_paths.values()]:
+        assert p.is_relative_to(new) and p.exists()
+
+
 @pytest.mark.parametrize("name", ["../x", "/abs"])
 def test_rejects_unsafe_members(tmp_path, name):
     buf = io.BytesIO()
