@@ -5,7 +5,7 @@ import SelectedTrackPanel from "./SelectedTrackPanel";
 import Stage from "./Stage";
 import TopBar from "./TopBar";
 import { fetchAssetForExport, fetchTrackingWindow } from "../api";
-import { highlightFor, objectColor, transportAction } from "../lib/selection";
+import { highlightFor, objectColor, reconcileSelection, soloToggleAction, transportAction } from "../lib/selection";
 import type {
   AssetResponse,
   AudioTrackArtifact,
@@ -72,6 +72,8 @@ export default function VideoEditor({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [serverUrl, setServerUrl] = useState("");
   const [panelError, setPanelError] = useState<string | null>(null);
+  // submitError as it was when the dialog opened: it came from a non-dialog action, so don't show it there.
+  const [staleDialogError, setStaleDialogError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [trackWindow, setTrackWindow] = useState<TrackWindowResponse | null>(null);
   const [timelineRows, setTimelineRows] = useState<TimelineRow[]>(state.timeline_rows);
@@ -84,6 +86,7 @@ export default function VideoEditor({
   const audioCacheRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const animationRef = useRef<number | null>(null);
   const trackWindowRequestRef = useRef<string | null>(null);
+  const trackWindowAssetRef = useRef<number | null>(null);
   const video = state.video;
   const fps = video?.fps || 30;
   const timelineFrameCount = Math.max(video?.frame_count ?? 0, inferFrameCount(timelineRows));
@@ -178,7 +181,9 @@ export default function VideoEditor({
     };
   }, []);
 
+  // New audio files: a playing stem preview is stale too, so stop it, not just the cached elements.
   useEffect(() => {
+    stopPreviewAudio(false);
     for (const audio of audioCacheRef.current.values()) {
       audio.pause();
     }
@@ -196,9 +201,19 @@ export default function VideoEditor({
   }, [selectedTrackId]);
 
   useEffect(() => {
-    if (selectedTrackId === null && soundTracks.length > 0) {
-      setSelectedTrackId(soundTracks[0].sound_track_id);
+    if (submitError === null) {
+      setStaleDialogError(null);
     }
+  }, [submitError]);
+
+  // A new video, loaded project or rerun replaces the tracks: drop ids that no longer exist.
+  useEffect(() => {
+    setSelectedTrackId((current) =>
+      reconcileSelection(current, soundTracks.map((t) => t.sound_track_id)),
+    );
+    setSoloTrackId((current) =>
+      current && !soundTracks.some((t) => t.sound_track_id === current) ? null : current,
+    );
   }, [selectedTrackId, soundTracks]);
 
   useEffect(() => {
@@ -207,7 +222,7 @@ export default function VideoEditor({
     }
     if (
       trackWindow &&
-      trackWindow.version === state.version &&
+      trackWindowAssetRef.current === state.asset_version &&
       selectedFrame >= trackWindow.start_frame + 60 &&
       selectedFrame <= trackWindow.end_frame - 60
     ) {
@@ -215,17 +230,21 @@ export default function VideoEditor({
     }
     const startFrame = Math.max(0, selectedFrame - 300);
     const endFrame = Math.min(maxFrame, selectedFrame + 300);
-    const requestKey = `${state.version}:${startFrame}:${endFrame}`;
+    const assetVersion = state.asset_version;
+    const requestKey = `${assetVersion}:${startFrame}:${endFrame}`;
     if (trackWindowRequestRef.current === requestKey) {
       return;
     }
     trackWindowRequestRef.current = requestKey;
     void fetchTrackingWindow(startFrame, endFrame)
-      .then(setTrackWindow)
+      .then((window) => {
+        trackWindowAssetRef.current = assetVersion;
+        setTrackWindow(window);
+      })
       .finally(() => {
         trackWindowRequestRef.current = null;
       });
-  }, [maxFrame, selectedFrame, selectedTrackId, state.version, trackWindow, video]);
+  }, [maxFrame, selectedFrame, selectedTrackId, state.asset_version, trackWindow, video]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -366,7 +385,7 @@ export default function VideoEditor({
     }
     setPanelError(null);
     try {
-      await onRegenerateEventAudio(soundEventId, description, spokenText, null);
+      await onRegenerateEventAudio(soundEventId, description, spokenText, serverUrl.trim() || null);
     } catch (error) {
       setPanelError(error instanceof Error ? error.message : String(error));
       return;
@@ -375,16 +394,42 @@ export default function VideoEditor({
     setHasTimelineEdits(false);
   }
 
+  // Solo only counts while that track still has audio.
+  function effectiveSolo(id: string | null): string | null {
+    return id && audioTrackArtifacts.some((a) => a.sound_track_id === id) ? id : null;
+  }
+
+  function playerState() {
+    const video = videoRef.current;
+    return {
+      previewPlaying: !!audioPreviewRef.current && !audioPreviewRef.current.paused,
+      videoPlaying: !!video && !video.paused,
+    };
+  }
+
+  // Solo changes what plays: if something is playing, restart from the current frame with the new choice.
+  function toggleSolo(id: string) {
+    const next = soloTrackId === id ? null : id;
+    setSoloTrackId(next);
+    const action = soloToggleAction({ ...playerState(), soloTrackId: effectiveSolo(next) });
+    const video = videoRef.current;
+    if (!action || !video) {
+      return;
+    }
+    const currentFrame = clamp(Math.round(video.currentTime * fps), 0, maxFrame);
+    if (action === "play-solo" && next) {
+      playSyncedAudio(trackAudioUrl(next), currentFrame / fps, currentFrame);
+    } else {
+      stopPreviewAudio(true);
+      void video.play();
+    }
+  }
+
   function togglePlayback() {
     const video = videoRef.current;
     const action = transportAction({
-      previewPlaying: !!audioPreviewRef.current && !audioPreviewRef.current.paused,
-      videoPlaying: !!video && !video.paused,
-      // Solo only counts while that track still has audio.
-      soloTrackId:
-        soloTrackId && audioTrackArtifacts.some((a) => a.sound_track_id === soloTrackId)
-          ? soloTrackId
-          : null,
+      ...playerState(),
+      soloTrackId: effectiveSolo(soloTrackId),
     });
     if (action === "stop-preview") {
       stopPreviewAudio(true);
@@ -537,7 +582,10 @@ export default function VideoEditor({
         state={state}
         submitError={dialogOpen ? null : submitError}
         canGenerate={!!video}
-        onOpen={() => setDialogOpen(true)}
+        onOpen={() => {
+          setStaleDialogError(submitError);
+          setDialogOpen(true);
+        }}
         onGenerate={() => void submitGenerateAudio()}
       />
       <main className="wrap">
@@ -567,7 +615,6 @@ export default function VideoEditor({
           rows={timelineRows}
           soundTracks={soundTracks}
           audioTracks={audioTrackArtifacts}
-          assetVersion={state.asset_version}
           frame={selectedFrame}
           frameCount={timelineFrameCount}
           onEditSoundEvent={editSoundEventTimestamp}
@@ -577,7 +624,7 @@ export default function VideoEditor({
           selectedTrackId={selectedTrackId}
           onSelectTrack={setSelectedTrackId}
           soloTrackId={soloTrackId}
-          onToggleSolo={(id) => setSoloTrackId((current) => (current === id ? null : id))}
+          onToggleSolo={toggleSolo}
           trackStatus={baseAsset?.track_status ?? {}}
           appRunning={state.status === "running"}
           trackColors={trackColors}
@@ -617,7 +664,7 @@ export default function VideoEditor({
         onClose={() => setDialogOpen(false)}
         running={state.status === "running"}
         hasVideo={!!video}
-        error={submitError}
+        error={submitError === staleDialogError ? null : submitError}
         serverUrl={serverUrl}
         onServerUrlChange={setServerUrl}
         onSubmit={onSubmit}

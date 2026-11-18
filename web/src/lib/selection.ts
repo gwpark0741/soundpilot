@@ -48,3 +48,21 @@ export function transportAction(s: {
   if (s.videoPlaying) return "pause-video";
   return s.soloTrackId ? "play-solo" : "play-mix";
 }
+
+// Solo toggled while something plays: restart with the new choice, else leave playback alone.
+// Solo on -> that stem; Solo off -> the mix, but only if a stem preview was playing (the mix already plays otherwise).
+export function soloToggleAction(s: {
+  previewPlaying: boolean;
+  videoPlaying: boolean;
+  soloTrackId: string | null;
+}): "play-solo" | "play-mix" | null {
+  if (!s.previewPlaying && !s.videoPlaying) return null;
+  if (s.soloTrackId) return "play-solo";
+  return s.previewPlaying ? "play-mix" : null;
+}
+
+// Keeps the selection while its track exists; otherwise (first load, new video, loaded project) the first track.
+export function reconcileSelection(current: string | null, trackIds: string[]): string | null {
+  if (trackIds.length === 0 || (current !== null && trackIds.includes(current))) return current;
+  return trackIds[0];
+}

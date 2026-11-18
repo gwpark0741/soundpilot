@@ -12,7 +12,6 @@ interface TimelineProps {
   rows: TimelineRow[];
   soundTracks: SoundTrack[];
   audioTracks: AudioTrackArtifact[];
-  assetVersion: number;
   frame: number;
   frameCount: number;
   fps?: number;
