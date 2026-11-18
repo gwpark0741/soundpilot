@@ -15,6 +15,7 @@ export interface AssetResponse {
   timeline_rows: TimelineRow[];
   audio_tracks: AudioTrackArtifact[];
   audio_events: AudioEventArtifact[];
+  track_targets: Record<string, string[]>;
 }
 
 export interface FullAssetResponse extends AssetResponse {
@@ -125,6 +126,7 @@ export interface TrackWindowResponse {
 export interface TrackWindowTrack {
   scene: number;
   track: number;
+  scene_track_id: string;
   label: string;
   start_frame: number;
   end_frame: number;
@@ -136,6 +138,7 @@ export interface TrackWindowPoint {
   frame_index: number;
   bbox_xyxy: [number, number, number, number];
   confidence: number;
+  mask_rle?: string | null;
 }
 
 export interface VisualIdentityLayer {

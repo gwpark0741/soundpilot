@@ -24,6 +24,7 @@ const emptyAsset: AssetResponse = {
   timeline_rows: [],
   audio_tracks: [],
   audio_events: [],
+  track_targets: {},
 };
 
 export default function App() {
