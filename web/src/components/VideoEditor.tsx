@@ -5,6 +5,7 @@ import SelectedTrackPanel from "./SelectedTrackPanel";
 import Stage from "./Stage";
 import TopBar from "./TopBar";
 import { fetchAssetForExport, fetchTrackingWindow } from "../api";
+import { trackWindowNeedsFetch } from "../lib/trackWindow";
 import { highlightFor, objectColor, reconcileSelection, soloToggleAction, transportAction } from "../lib/selection";
 import type {
   AssetResponse,
@@ -220,17 +221,16 @@ export default function VideoEditor({
     if (!selectedTrackId || !video) {
       return;
     }
-    if (
-      trackWindow &&
-      trackWindowAssetRef.current === state.asset_version &&
-      selectedFrame >= trackWindow.start_frame + 60 &&
-      selectedFrame <= trackWindow.end_frame - 60
-    ) {
+    const assetVersion = state.asset_version;
+    const fetched =
+      trackWindow && trackWindowAssetRef.current !== null
+        ? { ...trackWindow, assetVersion: trackWindowAssetRef.current }
+        : null;
+    if (!trackWindowNeedsFetch({ window: fetched, frame: selectedFrame, maxFrame, assetVersion })) {
       return;
     }
     const startFrame = Math.max(0, selectedFrame - 300);
     const endFrame = Math.min(maxFrame, selectedFrame + 300);
-    const assetVersion = state.asset_version;
     const requestKey = `${assetVersion}:${startFrame}:${endFrame}`;
     if (trackWindowRequestRef.current === requestKey) {
       return;
@@ -241,7 +241,8 @@ export default function VideoEditor({
         trackWindowAssetRef.current = assetVersion;
         setTrackWindow(window);
       })
-      .finally(() => {
+      .catch(() => {
+        // Allow a retry; a successful key stays so the same window is not requested twice.
         trackWindowRequestRef.current = null;
       });
   }, [maxFrame, selectedFrame, selectedTrackId, state.asset_version, trackWindow, video]);

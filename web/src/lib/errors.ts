@@ -22,12 +22,14 @@ export function failure(what: string, error: unknown, next: string): string {
 }
 
 // Failure text for a track's panel: a short human cause, then the next step (mockup copy).
-// The raw backend message (host, port, errno) never reaches the screen.
+// The raw backend message (host, port, errno) never reaches the screen. The tools-server hint
+// is only added for tools-server/HTTP failures; other details (e.g. no original audio) stand alone.
 export function trackFailureText(raw: string | null | undefined): string {
   const detail = (raw ?? "").trim();
   const next = "Check the tools server, then press Regenerate.";
   if (/unreachable/i.test(detail)) return `Audyssey tools server unreachable. ${next}`;
   if (!detail) return `Generation failed. ${next}`;
   const short = detail.length > MAX_DETAIL ? `${detail.slice(0, MAX_DETAIL).trimEnd()}…` : detail;
-  return `${/[.!?…]$/.test(short) ? short : `${short}.`} ${next}`;
+  const text = /[.!?…]$/.test(short) ? short : `${short}.`;
+  return /^Audyssey .* failed \(/.test(detail) ? `${text} ${next}` : text;
 }

@@ -159,7 +159,10 @@ class UiAudioEventTest(unittest.TestCase):
                 store = VideoAssetStore()
                 with patch(
                     "v2a_inspect.ui.pipeline.generate_audio_for_item",
-                    side_effect=RuntimeError("server 500: boom"),
+                    side_effect=RuntimeError(
+                        "Audyssey tools server unreachable at http://127.0.0.1:8700: "
+                        "[Errno 111] Connection refused"
+                    ),
                 ):
                     await run_event_audio_regeneration_pipeline(
                         asset,
@@ -171,7 +174,49 @@ class UiAudioEventTest(unittest.TestCase):
                     )
 
                 snapshot = await store.snapshot()
-                self.assertIn("server 500: boom", snapshot.error)
+                # Top bar: short copy, no host/port/errno. Detail stays in the track status.
+                self.assertEqual(snapshot.error, "Narrator failed. Previous audio kept.")
+                self.assertNotIn("127.0.0.1", snapshot.error)
+                self.assertNotIn("Errno", snapshot.error)
+                status = snapshot.asset.track_status[track.sound_track_id]
+                self.assertEqual(status.state, "failed")
+                self.assertIn("unreachable", status.error)
+
+        asyncio.run(run())
+
+
+class TopBarErrorTest(unittest.TestCase):
+    def test_tools_server_details_are_hidden_others_kept(self) -> None:
+        from v2a_inspect.ui.pipeline import _top_bar_error
+
+        for raw in (
+            "Audyssey tools server unreachable at http://127.0.0.1:8700: [Errno 111]",
+            "Audyssey /generate failed (500): boom",
+        ):
+            self.assertEqual(_top_bar_error(RuntimeError(raw), "Short."), "Short.")
+        self.assertEqual(_top_bar_error(ValueError("Audio prompt is required."), "Short."), "Audio prompt is required.")
+
+
+class ResidualToggleErrorTest(unittest.TestCase):
+    def test_failure_top_bar_has_no_raw_detail(self) -> None:
+        from v2a_inspect.ui.pipeline import run_residual_toggle_pipeline
+
+        async def run() -> None:
+            track = SoundTrack(track_type="sfx", label="Door")
+            asset = VideoAsset(
+                source_path=Path("video.mp4"),
+                frame_count=30,
+                sound_timeline=SoundTimeline(sound_tracks=[track], sound_events=[]),
+            )
+            store = VideoAssetStore()
+            with patch(
+                "v2a_inspect.ui.pipeline._rebuild_audio_outputs",
+                new=AsyncMock(side_effect=RuntimeError("ffmpeg at /tmp/x: Errno 2")),
+            ):
+                with self.assertLogs("v2a_inspect.ui.pipeline", "ERROR"):
+                    await run_residual_toggle_pipeline(asset, store, True)
+            snapshot = await store.snapshot()
+            self.assertEqual(snapshot.error, "Could not change the rest of original audio.")
 
         asyncio.run(run())
 

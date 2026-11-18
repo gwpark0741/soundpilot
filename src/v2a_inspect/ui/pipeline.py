@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import secrets
 from collections import defaultdict
@@ -460,7 +461,7 @@ async def run_audio_generation_pipeline(
             video_asset, stage="Audio generation complete. Ready for preview."
         )
     except Exception as exc:
-        await store.set_error(str(exc))
+        await store.set_error(_top_bar_error(exc, "Audio generation failed."))
 
 
 async def run_event_audio_delete_pipeline(
@@ -509,6 +510,7 @@ async def run_event_audio_regeneration_pipeline(
     spoken_text: str | None,
     server_url: str | None,
 ) -> None:
+    track: SoundTrack | None = None
     try:
         timeline = video_asset.sound_timeline
         if timeline is None:
@@ -583,12 +585,24 @@ async def run_event_audio_regeneration_pipeline(
             if str(current.sound_event_id) != sound_event_id
         ]
         event_artifacts.append(artifact)
+        if track.sound_track_id in video_asset.track_status:
+            # Clear an earlier failure now that this track produced audio again.
+            video_asset = await _set_track_status(
+                video_asset, store, track.sound_track_id, TrackStatus(state="done")
+            )
         video_asset = await _rebuild_audio_outputs(
             video_asset, audio_plan, event_artifacts, store
         )
         await store.set_complete_asset(video_asset, stage="Regenerated event audio.")
     except Exception as exc:  # noqa: BLE001 - UI needs stage-specific failure text.
-        await store.set_error(str(exc))
+        if track is None:
+            await store.set_error(str(exc))
+            return
+        # Short top-bar copy; the detail stays in the track's status.
+        await _set_track_status(
+            video_asset, store, track.sound_track_id, TrackStatus(state="failed", error=str(exc))
+        )
+        await store.set_error(f"{track.label} failed. Previous audio kept.")
 
 
 async def run_track_regeneration_pipeline(
@@ -723,11 +737,18 @@ async def run_residual_toggle_pipeline(
             video_asset, audio_plan, video_asset.sound_event_audio_artifacts, store
         )
         await store.set_complete_asset(video_asset, stage="Updated residual.")
-    except Exception as exc:  # noqa: BLE001 - UI needs stage-specific failure text.
-        await store.set_error(str(exc))
+    except Exception:  # noqa: BLE001 - UI needs stage-specific failure text.
+        logging.getLogger(__name__).exception("Residual toggle failed")
+        await store.set_error("Could not change the rest of original audio.")
 
 
 _TRACK_LEVEL_MODELS = ("separate", "selsync")
+
+
+def _top_bar_error(exc: Exception, short: str) -> str:
+    """Hide tools-server details (host, port, errno) from the top bar."""
+    text = str(exc)
+    return short if re.search(r"unreachable|Audyssey \S+ failed \(", text) else text
 
 
 async def _refresh_residual(video_asset: VideoAsset) -> VideoAsset:
