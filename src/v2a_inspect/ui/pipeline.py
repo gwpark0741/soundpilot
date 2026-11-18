@@ -5,7 +5,8 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
+from uuid import UUID
 
 import numpy as np
 from moviepy import AudioFileClip
@@ -22,7 +23,14 @@ from v2a_inspect.models import (
     SoundEventAudioArtifact,
     SoundTrack,
     SoundTrackAudioArtifact,
+    TrackStatus,
     VideoAsset,
+)
+from v2a_inspect.audio_generation.audyssey import (
+    generate_track,
+    separate_track,
+    source_plan,
+    track_description,
 )
 from v2a_inspect.audio_generation.client import generate_audio_for_item
 from v2a_inspect.audio_generation.plan import build_audio_plan
@@ -285,6 +293,8 @@ async def run_audio_generation_pipeline(
                 "synthesized_video_path": None,
                 "sound_event_audio_artifacts": [],
                 "sound_track_audio_artifacts": [],
+                "separated_stem_paths": {},
+                "track_status": {},
             }
         )
         await store.publish_asset_mutation(video_asset, stage="preparing audio plan")
@@ -303,9 +313,14 @@ async def run_audio_generation_pipeline(
             total_duration=video_duration,
         )
         item_context = _audio_item_context(timeline, audio_plan)
+        event_items = [
+            item
+            for item in audio_plan.items
+            if item.generation_model not in _TRACK_LEVEL_MODELS
+        ]
 
         video_id: str | None = None
-        if any(item.generation_model == "v2a" for item in audio_plan.items):
+        if any(item.generation_model == "v2a" for item in event_items):
             await store.touch(stage="uploading video for V2A generation")
             async with VideoClient(base_url=server_url) as video_client:
                 try:
@@ -314,12 +329,51 @@ async def run_audio_generation_pipeline(
                 except Exception:
                     pass
 
-        n_items = len(audio_plan.items)
+        n_items = len(event_items)
 
         event_artifacts: list[SoundEventAudioArtifact] = []
+        track_artifacts: list[SoundTrackAudioArtifact] = []
         errors: list[str] = []
 
-        for i, item in enumerate(audio_plan.items, 1):
+        for track in timeline.sound_tracks:
+            method = track.generation_model
+            if method not in _TRACK_LEVEL_MODELS:
+                continue
+            track_id = track.sound_track_id
+            events = [e for e in timeline.sound_events if e.sound_track_id == track_id]
+            if not events:
+                continue
+            video_asset = await _set_track_status(
+                video_asset, store, track_id, TrackStatus(state="running")
+            )
+            try:
+                artifact = await _generate_track_stem(
+                    video_asset,
+                    track,
+                    method=method,
+                    description=track_description(track, events),
+                    seed=settings.selsync_seed if method == "selsync" else None,
+                    attempt=1 if method == "separate" else None,
+                    out_dir=track_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 - collect per-track failures.
+                errors.append(f"{track.label}: {exc}")
+                status = TrackStatus(state="failed", error=str(exc))
+            else:
+                track_artifacts.append(artifact)
+                if method == "separate":
+                    video_asset = video_asset.model_copy(
+                        update={
+                            "separated_stem_paths": {
+                                **video_asset.separated_stem_paths,
+                                track_id: artifact.path,
+                            }
+                        }
+                    )
+                status = TrackStatus(state="done")
+            video_asset = await _set_track_status(video_asset, store, track_id, status)
+
+        for i, item in enumerate(event_items, 1):
             context = item_context.get(item.item_id)
             if context is None:
                 continue
@@ -368,11 +422,11 @@ async def run_audio_generation_pipeline(
                 )
             )
 
-        if not event_artifacts:
+        if not event_artifacts and not track_artifacts:
             raise ValueError("No audio files were generated. " + "; ".join(errors))
 
         video_asset = await _rebuild_audio_outputs(
-            video_asset, audio_plan, event_artifacts, store
+            video_asset, audio_plan, event_artifacts, store, track_artifacts
         )
         await store.set_complete_asset(
             video_asset, stage="Audio generation complete. Ready for preview."
@@ -509,6 +563,71 @@ async def run_event_audio_regeneration_pipeline(
         await store.set_error(str(exc))
 
 
+_TRACK_LEVEL_MODELS = ("separate", "selsync")
+
+
+async def _set_track_status(
+    video_asset: VideoAsset,
+    store: VideoAssetStore,
+    track_id: UUID,
+    status: TrackStatus,
+) -> VideoAsset:
+    video_asset = video_asset.model_copy(
+        update={"track_status": {**video_asset.track_status, track_id: status}}
+    )
+    await store.publish_asset_mutation(video_asset, stage="generating track stems")
+    return video_asset
+
+
+async def _generate_track_stem(
+    video_asset: VideoAsset,
+    track: SoundTrack,
+    *,
+    method: Literal["separate", "selsync"],
+    description: str,
+    seed: int | None,
+    attempt: int | None,
+    out_dir: Path,
+) -> SoundTrackAudioArtifact:
+    timeline = video_asset.sound_timeline
+    events = [
+        e
+        for e in (timeline.sound_events if timeline else [])
+        if e.sound_track_id == track.sound_track_id
+    ]
+    plan = source_plan(track, events, fps=video_asset.fps, description=description)
+    short = str(track.sound_track_id)[:8]
+    if method == "separate":
+        if video_asset.original_audio_path is None:
+            raise ValueError("원본 오디오가 없어 분리할 수 없습니다. 생성으로 바꾸세요.")
+        attempt = 1 if attempt is None else attempt
+        out_path = out_dir / f"{short}_separate_{attempt}.wav"
+        await asyncio.to_thread(
+            separate_track, video_asset.original_audio_path, plan, attempt, out_path
+        )
+        origin = "separated"
+    else:
+        seed = settings.selsync_seed if seed is None else seed
+        out_path = out_dir / f"{short}_selsync_{seed}.wav"
+        video_path = video_asset.raw_video_path or video_asset.source_path
+        await asyncio.to_thread(generate_track, video_path, plan, seed, out_path)
+        origin = "generated"
+    peaks = await asyncio.to_thread(_waveform_peaks, out_path)
+    return SoundTrackAudioArtifact(
+        sound_track_id=track.sound_track_id,
+        track_label=track.label,
+        track_type=track.track_type,
+        path=out_path,
+        duration_sec=round(video_asset.duration_sec, 3),
+        event_count=len(events),
+        waveform_peaks=peaks,
+        origin=origin,
+        seed=seed if method == "selsync" else None,
+        attempt=attempt if method == "separate" else None,
+        description=description,
+    )
+
+
 async def _generate_event_audio_artifact(
     item: AudioPlanItem,
     event: SoundEvent,
@@ -559,10 +678,18 @@ async def _rebuild_audio_outputs(
     audio_plan: AudioPlan,
     event_artifacts: list[SoundEventAudioArtifact],
     store: VideoAssetStore,
+    track_artifacts: list[SoundTrackAudioArtifact] | None = None,
 ) -> VideoAsset:
     timeline = video_asset.sound_timeline
     if timeline is None:
         raise ValueError("No sound timeline found in video asset.")
+
+    if track_artifacts is None:
+        # Event-only rebuilds keep the track-level stems already on the asset.
+        track_artifacts = [
+            a for a in video_asset.sound_track_audio_artifacts if a.origin != "mixed"
+        ]
+    stem_artifacts = [a for a in track_artifacts if a.path.exists()]
 
     plan_item_ids = {item.item_id for item in audio_plan.items}
     kept_event_artifacts = [
@@ -573,7 +700,7 @@ async def _rebuild_audio_outputs(
     generated_audio = {
         str(item.sound_event_id): str(item.path) for item in kept_event_artifacts
     }
-    if not generated_audio:
+    if not generated_audio and not stem_artifacts:
         return video_asset.model_copy(
             update={
                 "synthesized_video_path": None,
@@ -591,7 +718,7 @@ async def _rebuild_audio_outputs(
         if item.track_id and item.item_id in generated_audio:
             track_items[item.track_id].append(item)
 
-    track_artifacts: list[SoundTrackAudioArtifact] = []
+    mixed_artifacts: list[SoundTrackAudioArtifact] = []
     for track in timeline.sound_tracks:
         items = track_items.get(str(track.sound_track_id), [])
         if not items:
@@ -607,7 +734,7 @@ async def _rebuild_audio_outputs(
         if not stem_path or not Path(stem_path).exists():
             continue
         peaks = await asyncio.to_thread(_waveform_peaks, Path(stem_path))
-        track_artifacts.append(
+        mixed_artifacts.append(
             SoundTrackAudioArtifact(
                 sound_track_id=track.sound_track_id,
                 track_label=track.label,
@@ -619,6 +746,7 @@ async def _rebuild_audio_outputs(
             )
         )
 
+    track_artifacts = mixed_artifacts + stem_artifacts
     if not track_artifacts:
         return video_asset.model_copy(
             update={
@@ -645,6 +773,22 @@ async def _rebuild_audio_outputs(
             )
         )
         preview_audio[item_id] = str(artifact.path)
+    if (
+        video_asset.residual_enabled
+        and video_asset.residual_path
+        and video_asset.residual_path.exists()
+    ):
+        preview_plan.items.append(
+            AudioPlanItem(
+                item_id="residual",
+                type="ambience",
+                time=(0.0, video_duration),
+                description="residual",
+                volume=1.0,
+                generation_model="stem",
+            )
+        )
+        preview_audio["residual"] = str(video_asset.residual_path)
 
     output_path = str(_audio_work_root(video_asset) / "preview.mp4")
     result = await asyncio.to_thread(
