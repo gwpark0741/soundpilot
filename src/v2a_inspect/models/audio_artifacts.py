@@ -24,3 +24,7 @@ class SoundTrackAudioArtifact(SchemaModel):
     duration_sec: float
     event_count: int = Field(ge=0)
     waveform_peaks: list[float] = Field(default_factory=list)
+    origin: Literal["mixed", "separated", "generated"] = "mixed"
+    seed: int | None = None
+    attempt: int | None = None
+    description: str | None = None

@@ -6,7 +6,7 @@ from .initial_scene import InitialScene
 from .keyframe import Keyframe
 from .sound_timeline import SoundEvent, SoundSource, SoundTimeline, SoundTrack
 from .tracking import MaskRef, SceneTrack, SceneTrackPoint
-from .video import VideoAsset
+from .video import TrackStatus, VideoAsset
 from .visual_identity import (
     VisualEvent,
     VisualIdentityLayer,
@@ -20,6 +20,7 @@ __all__ = [
     "SoundEventAudioArtifact",
     "SoundTrackAudioArtifact",
     "SchemaModel",
+    "TrackStatus",
     "VideoAsset",
     "InitialScene",
     "Keyframe",
