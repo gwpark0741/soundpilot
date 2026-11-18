@@ -55,9 +55,13 @@ range except global source/track catalog searches.
 - Set one explicit generation_model per SoundTrack: t2a, v2a, or tts.
 - Speech tracks always use tts and every speech SoundEvent must include the
   exact spoken_text. Keep description as the acoustic/voice direction.
-- Default sfx and ambience to t2a.
-- Use v2a only when precise visible timing is essential to the generated sound,
-  such as an on-screen impact or contact. Timing alone does not require v2a.
+- v2a only for short contact sounds produced by the motion of a linked visible
+  object (SoundSource has `visual_object_label`): impacts, footsteps, drops, knocks.
+- t2a for everything else: ambience, weapon/body whooshes and swings, breaths,
+  grunts, vocal effort (non-speech), continuous textures (cloth, scrape,
+  movement), off-screen or scene-wide sounds.
+- Frame-precise timing (Transient Timing) only sets where events go; it is not a
+  reason to pick v2a. t2a events can be frame-tight too.
 - If one acoustic identity needs different models, split it into separate tracks.
 - SoundEvent = one audible occurrence. For visible impacts/transients, create
   one tight event per beat: clash, scrape, pass-by, footstep, knock, body hit,
