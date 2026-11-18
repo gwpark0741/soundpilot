@@ -30,3 +30,34 @@ test("decodeCocoRle matches the Python decoder", async (context) => {
   }
   assert.deepEqual({ area, x0, x1, y0, y1 }, { area: EXPECTED.area, x0: EXPECTED.x0, x1: EXPECTED.x1, y0: EXPECTED.y0, y1: EXPECTED.y1 });
 });
+
+test("rasterizeMasks samples the union of masks at reduced size", async (context) => {
+  const server = await createServer({
+    appType: "custom",
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true },
+  });
+  context.after(() => server.close());
+  const { decodeCocoRle, rasterizeMasks } = await server.ssrLoadModule("/src/lib/rle.ts");
+  // identity size == decode
+  const full = rasterizeMasks([RLE], 1280, 720);
+  assert.deepEqual(full, decodeCocoRle(RLE).data);
+  // half size == decode sampled at the (2x, 2y) pixels
+  const { data } = decodeCocoRle(RLE);
+  const half = rasterizeMasks([RLE], 640, 360);
+  let area = 0;
+  for (let y = 0; y < 360; y++) {
+    for (let x = 0; x < 640; x++) {
+      const want = data[(2 * y + 1) * 1280 + 2 * x + 1]; // (t+0.5)*2 floors to 2t+1
+      assert.equal(half[y * 640 + x], want);
+      area += half[y * 640 + x];
+    }
+  }
+  assert.ok(area > 100 && area < 200, `half-res area ${area}`);
+  // union of two masks
+  const other = JSON.stringify({ size: [720, 1280], counts: "<<<<<<" }); // small valid runs in the top-left corner
+  const both = rasterizeMasks([RLE, other], 640, 360);
+  const o = rasterizeMasks([other], 640, 360);
+  for (let i = 0; i < both.length; i++) assert.equal(both[i], half[i] | o[i]);
+  assert.equal(rasterizeMasks([], 4, 4).length, 16);
+});

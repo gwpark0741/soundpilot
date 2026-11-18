@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { decodeCocoRle } from "../lib/rle";
+import { rasterizeMasks } from "../lib/rle";
 import type { TrackWindowTrack, VideoSummary } from "../types";
 
 interface TrackingOverlayProps {
@@ -14,13 +14,17 @@ type Point = TrackWindowTrack["points"][number];
 
 const SOURCE_WIDTH = 1280;
 const SOURCE_HEIGHT = 720;
+// Masks are rasterized at half the 1280x720 source size: enough for a smooth outline,
+// a quarter of the per-frame pixel work.
 const MASK_FILL_ALPHA = 0.3;
-const HALO_BLUR = 3;
-const CACHE_LIMIT = 8;
+const MASK_W = 640;
+const MASK_H = 360;
 
-// Decoded masks keyed by the RLE string. Each is ~1280x720 pixels, so keep only a few
-// recent ones (consecutive frames rarely share a mask; a full window would be GBs).
-const maskCache = new Map<string, { fill: HTMLCanvasElement; edge: HTMLCanvasElement }>();
+// One offscreen canvas/ImageData reused for every frame (no per-frame allocation).
+let maskCanvas: HTMLCanvasElement | null = null;
+let maskImage: ImageData | null = null;
+let maskPixels: Uint32Array | null = null;
+let maskKey = "";
 
 export default function TrackingOverlay({
   video,
@@ -60,18 +64,19 @@ export default function TrackingOverlay({
     const offsetX = (rect.width - sourceWidth * scale) / 2;
     const offsetY = (rect.height - sourceHeight * scale) / 2;
 
+    const rles = points.flatMap((point) => (point.mask_rle ? [point.mask_rle] : []));
+    if (rles.length > 0) {
+      context.drawImage(
+        paintMasks(rles, highlightColor),
+        offsetX,
+        offsetY,
+        sourceWidth * scale,
+        sourceHeight * scale,
+      );
+    }
+
     for (const point of points) {
-      if (point.mask_rle) {
-        const mask = maskCanvases(point.mask_rle, highlightColor);
-        const w = sourceWidth * scale;
-        const h = sourceHeight * scale;
-        context.drawImage(mask.fill, offsetX, offsetY, w, h);
-        context.save();
-        context.shadowColor = "#000";
-        context.shadowBlur = HALO_BLUR;
-        context.drawImage(mask.edge, offsetX, offsetY, w, h);
-        context.restore();
-      } else if (point.bbox_xyxy) {
+      if (!point.mask_rle && point.bbox_xyxy) {
         const [x1, y1, x2, y2] = point.bbox_xyxy;
         const left = offsetX + x1 * scale;
         const top = offsetY + y1 * scale;
@@ -105,45 +110,43 @@ function indexTrackPoints(tracks: TrackWindowTrack[], sceneTrackIds: string[]): 
   return index;
 }
 
-// Two mask-sized canvases: translucent fill, and a 2px colour edge (drawn with a dark shadow as halo).
-function maskCanvases(rle: string, color: string) {
-  const key = `${color}|${rle}`;
-  const hit = maskCache.get(key);
-  if (hit) {
-    maskCache.delete(key);
-    maskCache.set(key, hit);
-    return hit;
+// All masks of the frame in one image: translucent fill, 1px (=2 source px) colour edge,
+// and a dark halo ring just outside it. Pixels are written as packed little-endian ABGR.
+function paintMasks(rles: string[], color: string): HTMLCanvasElement {
+  if (!maskCanvas || !maskImage || !maskPixels) {
+    maskCanvas = document.createElement("canvas");
+    maskCanvas.width = MASK_W;
+    maskCanvas.height = MASK_H;
+    maskImage = new ImageData(MASK_W, MASK_H);
+    maskPixels = new Uint32Array(maskImage.data.buffer);
   }
-  const { width, height, data } = decodeCocoRle(rle);
+  const key = `${color}|${rles.join("|")}`;
+  if (key === maskKey) {
+    return maskCanvas;
+  }
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
-  const fill = new ImageData(width, height);
-  const edge = new ImageData(width, height);
-  const inside = (x: number, y: number) =>
-    x >= 0 && y >= 0 && x < width && y < height && data[y * width + x] === 1;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (!data[y * width + x]) {
-        continue;
-      }
-      const o = (y * width + x) * 4;
-      fill.data.set([r, g, b, Math.round(255 * MASK_FILL_ALPHA)], o);
-      if (!inside(x - 2, y) || !inside(x + 2, y) || !inside(x, y - 2) || !inside(x, y + 2)) {
-        edge.data.set([r, g, b, 255], o);
+  const rgb = ((b << 16) | (g << 8) | r) >>> 0;
+  const FILL = (rgb | (Math.round(255 * MASK_FILL_ALPHA) << 24)) >>> 0;
+  const EDGE = (rgb | (255 << 24)) >>> 0;
+  const HALO = (217 << 24) >>> 0; // black, alpha 0.85
+  const m = rasterizeMasks(rles, MASK_W, MASK_H);
+  const px = maskPixels;
+  const last = MASK_W * MASK_H;
+  for (let y = 0; y < MASK_H; y++) {
+    for (let x = 0; x < MASK_W; x++) {
+      const i = y * MASK_W + x;
+      const left = x > 0 ? m[i - 1] : 0;
+      const right = x < MASK_W - 1 ? m[i + 1] : 0;
+      const up = i >= MASK_W ? m[i - MASK_W] : 0;
+      const down = i + MASK_W < last ? m[i + MASK_W] : 0;
+      if (m[i]) {
+        px[i] = left && right && up && down ? FILL : EDGE;
+      } else {
+        px[i] = left | right | up | down ? HALO : 0;
       }
     }
   }
-  const entry = { fill: toCanvas(fill), edge: toCanvas(edge) };
-  maskCache.set(key, entry);
-  if (maskCache.size > CACHE_LIMIT) {
-    maskCache.delete(maskCache.keys().next().value as string);
-  }
-  return entry;
-}
-
-function toCanvas(image: ImageData): HTMLCanvasElement {
-  const canvas = document.createElement("canvas");
-  canvas.width = image.width;
-  canvas.height = image.height;
-  canvas.getContext("2d")?.putImageData(image, 0, 0);
-  return canvas;
+  maskCanvas.getContext("2d")?.putImageData(maskImage, 0, 0);
+  maskKey = key;
+  return maskCanvas;
 }
