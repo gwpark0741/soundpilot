@@ -20,3 +20,14 @@ export function failure(what: string, error: unknown, next: string): string {
   if (detail.length > MAX_DETAIL) detail = `${detail.slice(0, MAX_DETAIL).trimEnd()}…`;
   return [what, detail && (/[.!?…]$/.test(detail) ? detail : `${detail}.`), next].filter(Boolean).join(" ");
 }
+
+// Failure text for a track's panel: a short human cause, then the next step (mockup copy).
+// The raw backend message (host, port, errno) never reaches the screen.
+export function trackFailureText(raw: string | null | undefined): string {
+  const detail = (raw ?? "").trim();
+  const next = "Check the tools server, then press Regenerate.";
+  if (/unreachable/i.test(detail)) return `Audyssey tools server unreachable. ${next}`;
+  if (!detail) return `Generation failed. ${next}`;
+  const short = detail.length > MAX_DETAIL ? `${detail.slice(0, MAX_DETAIL).trimEnd()}…` : detail;
+  return `${/[.!?…]$/.test(short) ? short : `${short}.`} ${next}`;
+}

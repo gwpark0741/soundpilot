@@ -341,7 +341,7 @@ async def run_audio_generation_pipeline(
 
         event_artifacts: list[SoundEventAudioArtifact] = []
         track_artifacts: list[SoundTrackAudioArtifact] = []
-        errors: list[str] = []
+        failed_labels: list[str] = []
 
         for track in timeline.sound_tracks:
             method = track.generation_model
@@ -363,7 +363,7 @@ async def run_audio_generation_pipeline(
                     out_dir=track_dir,
                 )
             except Exception as exc:  # noqa: BLE001 - collect per-track failures.
-                errors.append(f"{track.label}: {exc}")
+                failed_labels.append(track.label)
                 status = TrackStatus(state="failed", error=str(exc))
                 if track_id in previous_stems:
                     track_artifacts.append(previous_stems[track_id])
@@ -407,7 +407,7 @@ async def run_audio_generation_pipeline(
                     server_url=server_url,
                 )
             except Exception as exc:  # noqa: BLE001 - collect per-item failures.
-                errors.append(f"{track.label}: {exc}")
+                failed_labels.append(track.label)
                 event_track_failures.setdefault(track.sound_track_id, str(exc))
                 continue
 
@@ -448,7 +448,9 @@ async def run_audio_generation_pipeline(
             video_asset = await _set_track_status(video_asset, store, track_id, status)
 
         if not event_artifacts and not track_artifacts:
-            raise ValueError("No audio files were generated. " + "; ".join(errors))
+            # Short top-bar copy; per-track details live in TrackStatus.error.
+            names = ", ".join(dict.fromkeys(failed_labels))
+            raise ValueError(f"{names} failed." if names else "No audio was generated.")
 
         video_asset = await _refresh_residual(video_asset)
         video_asset = await _rebuild_audio_outputs(
@@ -668,7 +670,8 @@ async def run_track_regeneration_pipeline(
             await _set_track_status(
                 video_asset, store, track_id, TrackStatus(state="failed", error=str(exc))
             )
-            await store.set_error(f"{track.label}: {exc}")
+            # Short top-bar copy; the detail stays in TrackStatus.error.
+            await store.set_error(f"{track.label} failed. Previous audio kept.")
             return
 
         separated = dict(video_asset.separated_stem_paths)

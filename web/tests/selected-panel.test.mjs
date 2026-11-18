@@ -66,10 +66,18 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   assert.doesNotMatch(m, /Re-separate/);
 
   // failed
-  m = html({ status: { state: "failed", error: "Tools server unreachable." } });
+  m = html({
+    status: {
+      state: "failed",
+      error: "Audyssey tools server unreachable at http://127.0.0.1:8700: [Errno 111] Connection refused",
+    },
+  });
   assert.match(m, /Failed/);
-  assert.match(m, /Tools server unreachable\./);
+  assert.match(m, /Audyssey tools server unreachable\. Check the tools server, then press Regenerate\./);
+  assert.doesNotMatch(m, /127\.0\.0\.1|Errno/);
   assert.match(m, /Previous audio kept\./);
+  m = html({ status: { state: "failed", error: "Audyssey /generate failed (500): boom" } });
+  assert.match(m, /Audyssey \/generate failed \(500\): boom\. Check the tools server, then press Regenerate\./);
 
   // running / blocked
   m = html({

@@ -168,7 +168,8 @@ class TrackPipelineTest(unittest.TestCase):
             status = snapshot.asset.track_status[tracks[0].sound_track_id]
             self.assertEqual(status.state, "failed")
             self.assertIn("생성으로 바꾸세요", status.error)
-            self.assertIn("생성으로 바꾸세요", snapshot.error)
+            # Top bar gets short copy; the detail stays in the track status.
+            self.assertEqual(snapshot.error, "Door failed.")
 
     def test_stem_only_asset_builds_preview(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

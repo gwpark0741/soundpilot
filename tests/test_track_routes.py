@@ -448,7 +448,9 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
             snapshot = asyncio.run(store.snapshot())
 
             self.assertEqual(snapshot.status, "failed")
-            self.assertIn("boom", snapshot.error)
+            # Top bar gets short copy; the raw detail stays in the track status only.
+            self.assertEqual(snapshot.error, "Door failed. Previous audio kept.")
+            self.assertNotIn("boom", snapshot.error)
             self.assertEqual(snapshot.asset.sound_track_audio_artifacts, [old])
             status = snapshot.asset.track_status[track.sound_track_id]
             self.assertEqual(status.state, "failed")

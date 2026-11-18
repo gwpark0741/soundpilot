@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import Icon, { STATUS_ICON } from "./Icon";
+import { trackFailureText } from "../lib/errors";
 import { methodLabel, statusView, trackActions, type TrackAction } from "../lib/selection";
 import type { AudioTrackArtifact, SoundEvent, SoundTrack, TrackStatus } from "../types";
 
@@ -126,7 +127,7 @@ export default function SelectedTrackPanel({
           <div className="err">
             <Icon name="x" />
             <div>
-              {status.error || "Generation failed."}
+              {trackFailureText(status.error)}
               <p>
                 <Icon name="info" />
                 Previous audio kept.
