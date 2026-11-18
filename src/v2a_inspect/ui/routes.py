@@ -206,6 +206,11 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         tracks = asset.sound_timeline.sound_tracks if asset.sound_timeline else []
         if not any(str(t.sound_track_id) == sound_track_id for t in tracks):
             raise HTTPException(status_code=404, detail="Sound track not found")
+        track = next(t for t in tracks if str(t.sound_track_id) == sound_track_id)
+        if method == "selsync" and track.track_type == "speech":
+            raise HTTPException(
+                status_code=422, detail="대사 트랙은 분리 또는 TTS만 쓸 수 있습니다."
+            )
         if method == "separate" and not asset.has_audio:
             raise HTTPException(
                 status_code=422,

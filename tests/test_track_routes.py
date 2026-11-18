@@ -13,6 +13,7 @@ from scipy.io import wavfile
 
 from v2a_inspect.models import (
     SoundEvent,
+    SoundEventAudioArtifact,
     SoundTimeline,
     SoundTrack,
     SoundTrackAudioArtifact,
@@ -134,6 +135,24 @@ class TrackRouteTest(unittest.TestCase):
             self.assertEqual(response.status_code, 422)
             p.assert_not_called()
 
+    def test_selsync_on_speech_track_is_422(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            track = SoundTrack(track_type="speech", label="Voice", generation_model="tts")
+            asset = VideoAsset(
+                source_path=Path(temp_dir) / "video.mp4",
+                frame_count=30,
+                sound_timeline=SoundTimeline(sound_tracks=[track], sound_events=[]),
+            )
+            client, _ = self._client(asset)
+            with patch("v2a_inspect.ui.routes.run_track_regeneration_pipeline") as p:
+                response = client.post(
+                    f"/api/audio/tracks/{track.sound_track_id}/regenerate",
+                    data={"method": "selsync"},
+                )
+
+            self.assertEqual(response.status_code, 422)
+            p.assert_not_called()
+
     def test_residual_toggle_queues_and_guards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             asset, _ = _asset(Path(temp_dir))
@@ -233,6 +252,70 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
                 snapshot.asset.separated_stem_paths[track.sound_track_id], stem.path
             )
             self.assertIsNotNone(snapshot.asset.residual_path)
+
+    def test_separate_to_selsync_keeps_separated_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, track = _asset(
+                root, original_audio_path=_write_sine(root / "orig.wav"), has_audio=True
+            )
+            old = _write_sine(root / "old.wav")
+            asset = asset.model_copy(
+                update={"separated_stem_paths": {track.sound_track_id: old}}
+            )
+            snapshot = self._run(asset, track, method="selsync", seed=5)
+
+            self.assertEqual(snapshot.status, "complete")
+            self.assertEqual(
+                snapshot.asset.separated_stem_paths, {track.sound_track_id: old}
+            )
+            self.assertIsNotNone(snapshot.asset.residual_path)
+
+    def test_event_level_track_switch_does_not_double_mix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, track = _asset(root)
+            track = track.model_copy(update={"generation_model": "t2a"})
+            event = asset.sound_timeline.sound_events[0]
+            asset = asset.model_copy(
+                update={
+                    "sound_timeline": asset.sound_timeline.model_copy(
+                        update={"sound_tracks": [track]}
+                    ),
+                    "sound_event_audio_artifacts": [
+                        SoundEventAudioArtifact(
+                            sound_event_id=event.sound_event_id,
+                            sound_track_id=track.sound_track_id,
+                            path=_write_sine(root / "event.wav"),
+                            duration_sec=1.0,
+                            generation_model="t2a",
+                            description="Door event",
+                        )
+                    ],
+                }
+            )
+            store = VideoAssetStore()
+            asyncio.run(store.set_complete_asset(asset))
+            with (
+                patch("v2a_inspect.ui.pipeline.generate_track", side_effect=_fake_stem),
+                patch(
+                    "v2a_inspect.ui.pipeline.mix_audio_into_video",
+                    side_effect=_fake_mix,
+                ) as mix,
+            ):
+                asyncio.run(
+                    run_track_regeneration_pipeline(
+                        asset, store, str(track.sound_track_id), "selsync", None, None
+                    )
+                )
+            snapshot = asyncio.run(store.snapshot())
+
+            self.assertEqual(snapshot.status, "complete")
+            (stem,) = snapshot.asset.sound_track_audio_artifacts
+            self.assertEqual(stem.origin, "generated")
+            self.assertEqual(snapshot.asset.sound_event_audio_artifacts, [])
+            items = mix.call_args.kwargs["audio_plan"].items
+            self.assertEqual([i.item_id for i in items], [str(track.sound_track_id)])
 
     def test_failure_keeps_previous_stem_and_reports_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

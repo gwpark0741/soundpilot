@@ -639,9 +639,7 @@ async def run_track_regeneration_pipeline(
             await store.set_error(f"{track.label}: {exc}")
             return
 
-        separated = {
-            k: v for k, v in video_asset.separated_stem_paths.items() if k != track_id
-        }
+        separated = dict(video_asset.separated_stem_paths)
         if method == "separate":
             separated[track_id] = artifact.path
         video_asset = video_asset.model_copy(update={"separated_stem_paths": separated})
@@ -658,12 +656,14 @@ async def run_track_regeneration_pipeline(
         audio_plan = build_audio_plan(
             timeline, fps=video_asset.fps, total_duration=video_asset.duration_sec
         )
+        # The track is now stem-level: drop its old event WAVs so it is not mixed twice.
+        event_artifacts = [
+            a
+            for a in video_asset.sound_event_audio_artifacts
+            if a.sound_track_id != track_id
+        ]
         video_asset = await _rebuild_audio_outputs(
-            video_asset,
-            audio_plan,
-            video_asset.sound_event_audio_artifacts,
-            store,
-            stems,
+            video_asset, audio_plan, event_artifacts, store, stems
         )
         await store.set_complete_asset(video_asset, stage="Regenerated track audio.")
     except Exception as exc:  # noqa: BLE001 - UI needs stage-specific failure text.
