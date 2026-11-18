@@ -94,6 +94,7 @@ def track_rows(video_asset: VideoAsset) -> list[TableRow]:
                 {
                     "scene": scene_index,
                     "track": track_index,
+                    "scene_track_id": str(track.scene_track_id),
                     "label": _track_label(track),
                     "start_frame": track.start_frame_index,
                     "end_frame": track.end_frame_index,
@@ -288,6 +289,7 @@ def tracking_window_rows(
                     "frame_index": point.frame_index,
                     "bbox_xyxy": point.bbox_xyxy,
                     "confidence": round(point.confidence, 3),
+                    "mask_rle": point.mask.rle if point.mask else None,
                 }
                 for point in track.points
                 if start_frame <= point.frame_index <= end_frame
@@ -299,6 +301,7 @@ def tracking_window_rows(
                 {
                     "scene": scene_index,
                     "track": track_index,
+                    "scene_track_id": str(track.scene_track_id),
                     "label": _track_label(track),
                     "start_frame": track.start_frame_index,
                     "end_frame": track.end_frame_index,
