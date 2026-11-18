@@ -97,7 +97,7 @@ Audyssey를 대신 시연하지 않는 이유: SAM3로 물체를 추적하는 �
 - `separate`: 원본 오디오를 모노 WAV로 뽑아(형식은 Audyssey `/separate` 입력과 맞춤) Audyssey `/separate`에 `mono`, `plan`, `attempt`를 보낸다. 시각 힌트(video)는 보내지 않는다(Audyssey 기본값과 같음).
 - `selsync`: 원본 영상과 `plan`, `seed`를 Audyssey `/generate`에 보낸다.
 - `plan`은 Audyssey `SourcePlan` JSON이다. 대응: `name`=트랙 label, `kind`=트랙 종류(`speech`→`dialogue`), `description`=트랙 설명(아래), `spans`=그 트랙 이벤트 구간(초). `/generate`는 spans를 쓰지 않는다.
-- 트랙 설명: 새 필드 `SoundTrack.description: str | None`. 사용자가 고친 설명은 여기에 저장한다. 기본값 후보는 `track.label`(짧은 명사구, SAM Audio 입력 형태에 가까움)과 첫 이벤트 description(이벤트 생성용 문장) 두 가지다. P1-a에서 샘플과 시연 후보 영상으로 둘 다 분리·생성해 사용자가 듣고 고른다. `plan.py`가 붙이는 `"{source}, [{label}] "` 접두어는 트랙 경로에 쓰지 않는다.
+- 트랙 설명: 새 필드 `SoundTrack.description: str | None`. 사용자가 고친 설명은 여기에 저장한다. 기본값 후보는 `track.label`(짧은 명사구, SAM Audio 입력 형태에 가까움)과 첫 이벤트 description(이벤트 생성용 문장) 두 가지다. P1-a에서 샘플로 둘 다 분리·생성해 사용자가 듣고 **`label`로 정했다**(2026-11-18). `plan.py`가 붙이는 `"{source}, [{label}] "` 접두어는 트랙 경로에 쓰지 않는다.
 - 결과는 영상 길이 stem 1개다. 이 트랙의 이벤트별 WAV는 만들지 않는다.
 - 이벤트 단위 경로(`tts`, `t2a`, `v2a`)는 지금 그대로 이벤트 WAV를 만들고 트랙 stem으로 믹스한다.
 - **한 번의 "Generate Audio"가 두 경로를 모두 돈다.** 트랙마다 라우팅에 따라 트랙 경로 또는 이벤트 경로로 간다. 지금 파이프라인은 이벤트 WAV가 하나도 없으면 실패하거나 일찍 끝나므로(`ui/pipeline.py` `_rebuild_audio_outputs`, `run_audio_generation_pipeline`) stem만 있는 영상도 되도록 고친다.
@@ -160,7 +160,8 @@ Audyssey를 대신 시연하지 않는 이유: SAM3로 물체를 추적하는 �
 ### 5.5 재현성과 패키징
 
 **버전 고정**
-- 시연용 git 태그(`demo-<날짜>`)와 같은 태그의 이미지: `v2a-inspect`(UI), `v2a-inspect-server`(SAM3, Kokoro), Audyssey `audyssey-tools`(이미 빌드된 태그 하나를 골라 고정).
+- 시연용 git 태그(`demo-<날짜>`)와 같은 태그의 이미지: `v2a-inspect`(UI), `v2a-inspect-server`(SAM3, Kokoro), Audyssey `audyssey-tools`.
+- **Audyssey tools 이미지는 `audyssey-tools:demo-1117`(image ID `sha256:cc603e8ffc46c26da15aac051996271db8c06bdffe1134c1bdf7b6291d08694a`, 2026-11-13 빌드)로 고정한다**(사용자 결정, 2026-11-18). 이 이미지로 분리·SelSync 생성을 끝까지 실측했다([demo-measurements.md](../../demo-measurements.md)). 이 서버의 Audyssey `gpu/.venv`에는 `selva`가 없어 생성이 안 되므로 시연에 쓰지 않는다. RunPod 예비용으로는 같은 이미지를 레지스트리에 올리거나 내보내야 한다(로컬 빌드라 레지스트리 digest가 없다).
 - 가중치는 HF 스냅샷 해시로 고정하고 `HF_HUB_OFFLINE=1`로 실행.
 - LLM 모델 ID, thinking level, 시드 기본값을 `.env.demo` 한 파일에 모은다.
 
