@@ -35,11 +35,19 @@ class SoundTrackModelTests(unittest.TestCase):
     def test_description_defaults_to_none(self) -> None:
         self.assertIsNone(SoundTrack(track_type="sfx", label="S").description)
 
+    def test_agent_model_defaults_to_none_and_roundtrips(self) -> None:
+        track = SoundTrack(track_type="sfx", label="S")
+        self.assertIsNone(track.agent_model)
+        kept = SoundTrack(track_type="sfx", label="S", agent_model="v2a")
+        again = SoundTrack.model_validate_json(kept.model_dump_json())
+        self.assertEqual(again.agent_model, "v2a")
+
 
 class VideoAssetModelTests(unittest.TestCase):
     def test_old_asset_json_loads(self) -> None:
         asset = VideoAsset.model_validate_json(SAMPLE.read_text())
         self.assertIs(asset.has_audio, False)
+        self.assertEqual(asset.audio_mode, "generate")
         self.assertIsNone(asset.raw_video_path)
         self.assertIsNone(asset.original_audio_path)
         self.assertIsNone(asset.residual_path)
@@ -55,6 +63,7 @@ class VideoAssetModelTests(unittest.TestCase):
             raw_video_path=Path("raw.mp4"),
             original_audio_path=Path("orig.wav"),
             has_audio=True,
+            audio_mode="separate",
             separated_stem_paths={track_id: Path("stem.wav")},
             track_status={track_id: TrackStatus(state="failed", error="boom")},
             residual_path=Path("residual.wav"),
@@ -78,6 +87,7 @@ class VideoAssetModelTests(unittest.TestCase):
             asset.model_dump_json(exclude_computed_fields=True)
         )
         self.assertEqual(again, asset)
+        self.assertEqual(again.audio_mode, "separate")
         self.assertEqual(again.track_status[track_id].error, "boom")
 
     def test_artifact_defaults(self) -> None:

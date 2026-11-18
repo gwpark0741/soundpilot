@@ -46,6 +46,7 @@ export interface VideoAsset {
   raw_video_path?: string | null;
   original_audio_path?: string | null;
   has_audio?: boolean;
+  audio_mode?: "generate" | "separate";
   separated_stem_paths?: Record<string, string>;
   track_status?: Record<string, TrackStatus>;
   residual_path?: string | null;
@@ -175,6 +176,7 @@ export interface SoundTrack {
   canonical_key?: string | null;
   sound_source_id?: string | null;
   generation_model: GenerationModel;
+  agent_model?: "t2a" | "v2a" | "tts" | null;
   description?: string | null;
   notes?: string | null;
 }

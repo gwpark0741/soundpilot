@@ -51,6 +51,7 @@ class SoundTrack(SchemaModel):
     canonical_key: str | None = None
     sound_source_id: UUID | None = None
     generation_model: SoundGenerationModel = "t2a"
+    agent_model: Literal["t2a", "v2a", "tts"] | None = None
     description: str | None = None
 
     notes: str | None = None

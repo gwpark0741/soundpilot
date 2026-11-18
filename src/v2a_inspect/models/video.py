@@ -46,6 +46,7 @@ class VideoAsset(SchemaModel):
     raw_video_path: Path | None = None
     original_audio_path: Path | None = None
     has_audio: bool = False
+    audio_mode: Literal["generate", "separate"] = "generate"
     separated_stem_paths: dict[UUID, Path] = Field(default_factory=dict)
     track_status: dict[UUID, TrackStatus] = Field(default_factory=dict)
     residual_path: Path | None = None
