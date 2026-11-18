@@ -28,7 +28,7 @@ Compose 실행은 세 container를 GPU 1장에 올리는 `compose.demo.yaml`을 
 ```bash
 cp .env.demo.example .env.demo
 docker compose -f compose.demo.yaml --env-file .env.demo up -d
-python scripts/demo_preflight.py --gpu <N> --warmup <video>
+uv run python scripts/demo_preflight.py --gpu <N> --warmup <video>
 ```
 
 접속 주소는 `http://127.0.0.1:8501`이다. `V2A_INSPECT_UI_PASSWORD`가 설정되어 있으면 로그인 화면이 나타난다.

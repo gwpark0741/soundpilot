@@ -140,7 +140,7 @@ NVENC off, weights read-only from `HF_CACHE`):
 ```bash
 cp .env.demo.example .env.demo   # fill V2A_GPU_DEVICE, GEMINI_API_KEY, ELEVENLABS_API_KEY, AUDYSSEY_TOOL_TOKEN
 docker compose -f compose.demo.yaml --env-file .env.demo up -d
-python scripts/demo_preflight.py --gpu <N> --warmup <video> [<video> ...]
+uv run python scripts/demo_preflight.py --gpu <N> --warmup <video> [<video> ...]
 ```
 
 `--warmup` loads the tools models before the first real call. See
