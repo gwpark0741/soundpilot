@@ -121,9 +121,11 @@ export default function TopBar({
                 role="radio"
                 aria-checked={audioMode === mode}
                 className="btn"
-                disabled={running || noAudio}
+                disabled={running || noAudio || !canGenerate}
                 aria-describedby={noAudio ? "no-audio-why" : undefined}
-                onClick={() => onSetMode(mode)}
+                onClick={() => {
+                  if (mode !== audioMode) onSetMode(mode);
+                }}
               >
                 {label}
               </button>
@@ -137,7 +139,7 @@ export default function TopBar({
         ) : null}
       </div>
       <button className="btn primary" type="button" disabled={running || !canGenerate} onClick={onGenerate}>
-        {running ? "Generating…" : action}
+        {running ? (audioMode === "separate" ? "Separating…" : "Generating…") : action}
       </button>
     </header>
   );

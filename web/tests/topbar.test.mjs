@@ -80,4 +80,25 @@ test("TopBar shows the input badge, status line and a single primary button", as
 
   const busy = render({ state: { ...base, status: "running", stage: "analyze scenes" } });
   assert.equal((busy.match(/<button[^>]*role="radio"[^>]*disabled/g) ?? []).length, 2);
+
+  // no video loaded: both mode buttons are disabled
+  assert.equal((render({ canGenerate: false }).match(/<button[^>]*role="radio"[^>]*disabled/g) ?? []).length, 2);
+
+  // "Separating…" while separating
+  const separating = render({ audioMode: "separate", state: { ...base, status: "running", stage: "separating" } });
+  assert.match(separating, /<button[^>]*disabled[^>]*>Separating…</);
+  assert.doesNotMatch(separating, /Generating…/);
+
+  // re-selecting the current mode does not call onSetMode
+  const radios = [];
+  const walk = (node) => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!node || typeof node !== "object") return;
+    if (node.props?.role === "radio") radios.push(node);
+    walk(node.props?.children);
+  };
+  const calls = [];
+  walk(TopBar({ hasAudio: true, state: base, canGenerate: true, audioMode: "generate", onSetMode: (m) => calls.push(m), onOpen() {}, onGenerate() {} }));
+  radios.forEach((r) => r.props.onClick());
+  assert.deepEqual(calls, ["separate"]);
 });
