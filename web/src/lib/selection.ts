@@ -35,3 +35,16 @@ export function statusView(
   if (status?.state === "failed") return { label: "Failed", tone: "err" };
   return appRunning ? { label: "Queued", tone: "wait" } : { label: null, tone: null };
 }
+
+export type TransportAction = "stop-preview" | "pause-video" | "play-solo" | "play-mix";
+
+// Main play button: a running preview stem or video always stops first; only an idle press starts playback.
+export function transportAction(s: {
+  previewPlaying: boolean;
+  videoPlaying: boolean;
+  soloTrackId: string | null;
+}): TransportAction {
+  if (s.previewPlaying) return "stop-preview";
+  if (s.videoPlaying) return "pause-video";
+  return s.soloTrackId ? "play-solo" : "play-mix";
+}

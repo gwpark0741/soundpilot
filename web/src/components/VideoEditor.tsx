@@ -4,7 +4,7 @@ import Timeline from "./Timeline";
 import SelectedTrackPanel from "./SelectedTrackPanel";
 import Stage from "./Stage";
 import { fetchAssetForExport, fetchTrackingWindow } from "../api";
-import { highlightFor, objectColor } from "../lib/selection";
+import { highlightFor, objectColor, transportAction } from "../lib/selection";
 import type {
   AssetResponse,
   AudioEventArtifact,
@@ -465,22 +465,26 @@ export default function VideoEditor({
   }
 
   function togglePlayback() {
-    const soloPlaying = audioPreviewRef.current && !audioPreviewRef.current.paused;
-    // Solo on: play that track's stem in sync with the video instead of the mixed preview.
-    if (soloTrackId && audioTrackArtifacts.some((a) => a.sound_track_id === soloTrackId) && !soloPlaying) {
-      playSyncedAudio(trackAudioUrl(soloTrackId), selectedFrame / fps, selectedFrame);
-      return;
-    }
-    stopPreviewAudio(true);
     const video = videoRef.current;
-    if (!video) {
-      return;
-    }
-    if (video.paused) {
+    const action = transportAction({
+      previewPlaying: !!audioPreviewRef.current && !audioPreviewRef.current.paused,
+      videoPlaying: !!video && !video.paused,
+      // Solo only counts while that track still has audio.
+      soloTrackId:
+        soloTrackId && audioTrackArtifacts.some((a) => a.sound_track_id === soloTrackId)
+          ? soloTrackId
+          : null,
+    });
+    if (action === "stop-preview") {
+      stopPreviewAudio(true);
+    } else if (action === "pause-video") {
+      video?.pause();
+    } else if (action === "play-solo" && soloTrackId) {
+      playSyncedAudio(trackAudioUrl(soloTrackId), selectedFrame / fps, selectedFrame);
+    } else if (video) {
+      stopPreviewAudio(true);
       void video.play();
-      return;
     }
-    video.pause();
   }
 
   const editSoundEventTimestamp = useCallback(
