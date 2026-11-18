@@ -196,7 +196,7 @@ class TrackRouteTest(unittest.TestCase):
                 ["selsync"],
             )
 
-    def test_set_mode_routes_tracks_and_keeps_agent_model(self) -> None:
+    def test_set_mode_changes_only_audio_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             asset, track = _asset(Path(temp_dir), has_audio=True)
             client, store = self._client(asset)
@@ -211,13 +211,71 @@ class TrackRouteTest(unittest.TestCase):
             self.assertEqual(snapshot.status, "complete")
             self.assertEqual(snapshot.asset_version, version)  # media must not reload
             self.assertEqual(snapshot.asset.audio_mode, "separate")
-            (routed,) = tracks()
-            self.assertEqual((routed.generation_model, routed.agent_model), ("separate", "v2a"))
+            (kept,) = tracks()
+            self.assertEqual(kept.generation_model, "selsync")
 
             client.post("/api/audio/mode", data={"mode": "generate"})
             self.assertEqual(asyncio.run(store.snapshot()).asset.audio_mode, "generate")
-            (routed,) = tracks()
-            self.assertEqual((routed.generation_model, routed.agent_model), ("selsync", "v2a"))
+            (kept,) = tracks()
+            self.assertEqual(kept.generation_model, "selsync")
+
+    def test_mode_switch_then_partial_action_keeps_event_level_track_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, wind = _asset(
+                root, original_audio_path=_write_sine(root / "orig.wav"), has_audio=True
+            )
+            door = SoundTrack(track_type="sfx", label="Door", generation_model="t2a")
+            event = SoundEvent(
+                sound_track_id=door.sound_track_id,
+                start_frame_index=0,
+                end_frame_index=30,
+                description="Door event",
+            )
+            timeline = asset.sound_timeline
+            asset = asset.model_copy(
+                update={
+                    "sound_timeline": SoundTimeline(
+                        sound_tracks=[*timeline.sound_tracks, door],
+                        sound_events=[*timeline.sound_events, event],
+                    ),
+                    "sound_event_audio_artifacts": [
+                        SoundEventAudioArtifact(
+                            sound_event_id=event.sound_event_id,
+                            sound_track_id=door.sound_track_id,
+                            path=_write_sine(root / "event.wav"),
+                            duration_sec=1.0,
+                            generation_model="t2a",
+                            description="Door event",
+                        )
+                    ],
+                }
+            )
+            client, store = self._client(asset)
+            client.post("/api/audio/mode", data={"mode": "separate"})
+            switched = asyncio.run(store.snapshot()).asset
+            self.assertEqual(switched.audio_mode, "separate")
+
+            store = VideoAssetStore()
+            asyncio.run(store.set_complete_asset(switched))
+            with (
+                patch("v2a_inspect.ui.pipeline.separate_track", side_effect=_fake_stem),
+                patch(
+                    "v2a_inspect.ui.pipeline.mix_audio_into_video",
+                    side_effect=_fake_mix,
+                ),
+            ):
+                asyncio.run(
+                    run_track_regeneration_pipeline(
+                        switched, store, str(wind.sound_track_id), "separate", None, None
+                    )
+                )
+            snapshot = asyncio.run(store.snapshot())
+
+            self.assertEqual(snapshot.status, "complete")
+            ids = {a.sound_track_id for a in snapshot.asset.sound_track_audio_artifacts}
+            self.assertEqual(ids, {door.sound_track_id, wind.sound_track_id})
+            self.assertEqual(len(snapshot.asset.sound_event_audio_artifacts), 1)
 
     def test_residual_toggle_queues_and_guards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
