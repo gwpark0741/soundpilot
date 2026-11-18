@@ -29,7 +29,12 @@ from .pipeline import (
     run_residual_toggle_pipeline,
     run_track_regeneration_pipeline,
 )
-from .rows import current_frame_rows, timeline_rows, tracking_window_rows
+from .rows import (
+    current_frame_rows,
+    timeline_rows,
+    track_highlight_targets,
+    tracking_window_rows,
+)
 from .store import VideoAssetSnapshot, VideoAssetStore
 
 
@@ -584,6 +589,7 @@ def _summary_payload(snapshot: VideoAssetSnapshot) -> dict[str, object]:
         else [
             item.model_dump(mode="json") for item in asset.sound_event_audio_artifacts
         ],
+        "track_targets": {} if asset is None else track_highlight_targets(asset),
     }
 
 
