@@ -87,6 +87,11 @@ export default function TopBar({
         <button className="btn" type="button" onClick={onOpen}>
           Open video
         </button>
+        {hasAudio === null ? null : (
+          <a className="btn" href="/api/bundle" download>
+            Save bundle
+          </a>
+        )}
       </div>
       <div className={`status st-k-${view.kind}`} role="status">
         <Icon name={view.icon} />

@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import {
   fetchAssetSummary,
   cleanAsset,
-  importAsset,
+  importBundle,
   resetSoundTimeline,
   startRun,
   generateAudio,
@@ -64,10 +64,10 @@ export default function App() {
     event.preventDefault();
     setSubmitError(null);
     try {
-      await importAsset(event.currentTarget);
+      await importBundle(event.currentTarget);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(failure("Could not load the project.", error, "Check both files, then press Load again."));
+      setSubmitError(failure("Could not load the project.", error, "Check the bundle, then press Load again."));
       throw error;
     }
   }

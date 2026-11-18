@@ -59,15 +59,14 @@ export async function startRun(form: HTMLFormElement): Promise<void> {
   }
 }
 
-export async function importAsset(form: HTMLFormElement): Promise<void> {
-  const formData = new FormData(form);
-  const response = await fetch("/api/asset/import", {
+export async function importBundle(form: HTMLFormElement): Promise<void> {
+  const response = await fetch("/api/bundle/import", {
     method: "POST",
-    body: formData,
+    body: new FormData(form),
   });
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || `Failed to import asset: ${response.status}`);
+    throw new Error(message || `Failed to import bundle: ${response.status}`);
   }
 }
 

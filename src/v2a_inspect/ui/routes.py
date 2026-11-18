@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import shutil
@@ -19,6 +20,7 @@ from v2a_inspect.models import SoundTimeline, VideoAsset
 from v2a_inspect.preprocessing import prepare_video
 from v2a_inspect.preprocessing.video import extract_original_audio
 
+from .bundle import read_bundle, write_bundle
 from .overlays import render_tracking_overlay
 from .pipeline import (
     PipelineOptions,
@@ -446,6 +448,38 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             update["has_audio"] = resolved_video_asset.has_audio
         imported_asset = imported_asset.model_copy(update=update)
         await store.set_complete_asset(imported_asset, stage="imported asset")
+        return {"status": "imported"}
+
+    @router.get("/api/bundle")
+    async def export_bundle() -> Response:
+        snapshot = await store.snapshot()
+        root = None if snapshot.asset is None else _asset_work_root(snapshot.asset)
+        if snapshot.asset is None or root is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        buffer = io.BytesIO()
+        await asyncio.to_thread(write_bundle, snapshot.asset, root, buffer)
+        name = f"{snapshot.asset.source_path.stem}-bundle.zip"
+        return Response(
+            buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
+    @router.post("/api/bundle/import")
+    async def import_bundle(
+        bundle: Annotated[UploadFile, File()],
+        work_dir: Annotated[str | None, Form()] = None,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is already running")
+        try:
+            imported_asset = await asyncio.to_thread(
+                read_bundle, bundle.file, _root_dir(work_dir)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await store.set_complete_asset(imported_asset, stage="imported bundle")
         return {"status": "imported"}
 
     @router.post("/api/sound-timeline/reset-run")

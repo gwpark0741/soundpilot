@@ -96,12 +96,8 @@ export default function OpenVideoDialog({
           <h3>Load a saved project</h3>
           <input name="work_dir" type="hidden" value={workDir} />
           <label>
-            Video
-            <input name="video" type="file" accept="video/*" required />
-          </label>
-          <label>
-            VideoAsset JSON
-            <input name="asset" type="file" accept="application/json,.json" required />
+            Bundle (.zip)
+            <input name="bundle" type="file" accept=".zip,application/zip" required />
           </label>
           <div className="actions">
             <button className="btn" type="submit" disabled={running}>
