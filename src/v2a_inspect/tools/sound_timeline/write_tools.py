@@ -13,6 +13,7 @@ from .schemas import (
     SoundGenerationModel,
     SoundSourceType,
     SoundTrackType,
+    resolve_visual_object_id,
 )
 
 if TYPE_CHECKING:
@@ -30,8 +31,14 @@ class SoundTimelineWriteTools:
         sound_source_id: UUID | None = None,
         visual_object_id: UUID | None = None,
         notes: str | None = None,
+        visual_object_label: str | None = None,
     ) -> SoundSource:
         with self.editor.lock:
+            visual_object_id = resolve_visual_object_id(
+                self.editor.video_asset.visual_identity_layer,
+                visual_object_id,
+                visual_object_label,
+            )
             timeline = self.editor.ensure_sound_timeline()
             sources = list(timeline.sound_sources)
             if sound_source_id is None:

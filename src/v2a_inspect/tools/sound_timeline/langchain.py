@@ -110,8 +110,10 @@ def build_sound_timeline_tools(editor: SoundTimelineEditor) -> list[StructuredTo
             args_schema=UpsertSoundSourceArgs,
             description=(
                 "Create or update a SoundSource in the SoundTimeline. Use as soon "
-                "as a recurring sound emitter is known. Returns id=<uuid> for "
-                "later track/source updates."
+                "as a recurring sound emitter is known. To link a visible object, "
+                "pass visual_object_label exactly as shown in visual events "
+                "(e.g. 'player character #2'); do not use visual_object_id. "
+                "Returns id=<uuid> for later track/source updates."
             ),
         ),
         StructuredTool.from_function(
@@ -288,7 +290,7 @@ def _make_list_sound_tracks_tool(
 def _make_upsert_sound_source_tool(
     editor: SoundTimelineEditor,
 ) -> Callable[
-    [SoundSourceType, str, UUID | None, UUID | None, str | None],
+    [SoundSourceType, str, UUID | None, UUID | None, str | None, str | None],
     str,
 ]:
     def upsert_sound_source(
@@ -297,6 +299,7 @@ def _make_upsert_sound_source_tool(
         sound_source_id: UUID | None = None,
         visual_object_id: UUID | None = None,
         notes: str | None = None,
+        visual_object_label: str | None = None,
     ) -> str:
         return _tool_string(
             editor.upsert_sound_source(
@@ -305,6 +308,7 @@ def _make_upsert_sound_source_tool(
                 sound_source_id=sound_source_id,
                 visual_object_id=visual_object_id,
                 notes=notes,
+                visual_object_label=visual_object_label,
             )
         )
 

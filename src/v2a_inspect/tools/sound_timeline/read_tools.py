@@ -28,6 +28,7 @@ from .schemas import (
     VisualEventView,
     VisualEventsOutput,
     disambiguate_labels,
+    visual_object_labels,
 )
 
 if TYPE_CHECKING:
@@ -200,20 +201,7 @@ class SoundTimelineReadTools:
                 returned_event_count=0,
                 visual_events=[],
             )
-        visual_object_labels = disambiguate_labels(
-            [
-                visual_object.label or "unknown object"
-                for visual_object in layer.visual_objects
-            ]
-        )
-        object_labels = {
-            visual_object.visual_object_id: object_label
-            for visual_object, object_label in zip(
-                layer.visual_objects,
-                visual_object_labels,
-                strict=True,
-            )
-        }
+        object_labels = visual_object_labels(layer)
         events = []
         for event in layer.visual_events:
             if (
@@ -372,6 +360,9 @@ class SoundTimelineReadTools:
             returned_source_count=len(shown_sources),
             sound_sources=shown_sources,
             query=query,
+            visual_object_labels=visual_object_labels(
+                self.editor.video_asset.visual_identity_layer
+            ),
         )
 
     def list_sound_tracks(

@@ -47,6 +47,9 @@ range except global source/track catalog searches.
 - Use global frame ranges. If assigned frames exist, create/edit SoundEvents
   only inside them.
 - Create SoundSources for recurring physical/contextual emitters.
+- For a visible-object SoundSource, pass `visual_object_label` exactly as shown
+  in visual events' `object_label` (e.g. "player character #2"); pick the object
+  whose events match the sound's timing. Omit it for scene_global/offscreen.
 - Create SoundTracks as reusable audio lanes. Add SoundEvents only to existing
   SoundTracks.
 - Set one explicit generation_model per SoundTrack: t2a, v2a, or tts.

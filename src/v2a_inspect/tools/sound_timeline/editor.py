@@ -121,6 +121,7 @@ class SoundTimelineEditor:
         sound_source_id: UUID | None = None,
         visual_object_id: UUID | None = None,
         notes: str | None = None,
+        visual_object_label: str | None = None,
     ) -> SoundSource:
         return self.write.upsert_sound_source(
             source_type=source_type,
@@ -128,6 +129,7 @@ class SoundTimelineEditor:
             sound_source_id=sound_source_id,
             visual_object_id=visual_object_id,
             notes=notes,
+            visual_object_label=visual_object_label,
         )
 
     def delete_sound_source(self, sound_source_id: UUID) -> DeleteSoundSourceOutput:
