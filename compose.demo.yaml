@@ -36,7 +36,7 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,video}
     volumes:
       - *hf-volume
-      - v2a_server_data:/data/uploads
+      - v2a_server_data:/data  # /data (not /data/uploads) so the volume inherits appuser ownership
     healthcheck:
       test:
         [
