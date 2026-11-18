@@ -24,7 +24,14 @@ class BaseClient:
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self):
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
+        headers = (
+            {"Authorization": f"Bearer {settings.server_token}"}
+            if settings.server_token
+            else {}
+        )
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url, timeout=self.timeout, headers=headers
+        )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):

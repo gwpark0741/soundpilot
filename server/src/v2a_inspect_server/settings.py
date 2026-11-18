@@ -12,6 +12,7 @@ class ServerSettings(BaseSettings):
         default=Path("/tmp/v2a_uploads"),
         validation_alias=AliasChoices("V2A_SERVER_UPLOAD_DIR", "V2A_UPLOAD_DIR"),
     )
+    api_token: str = ""
     host: str = "0.0.0.0"
     port: int = 8080
     sam31_max_num_objects: int = 48
