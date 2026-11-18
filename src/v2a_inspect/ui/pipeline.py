@@ -34,6 +34,7 @@ from v2a_inspect.audio_generation.audyssey import (
 )
 from v2a_inspect.audio_generation.client import generate_audio_for_item
 from v2a_inspect.audio_generation.plan import build_audio_plan
+from v2a_inspect.audio_generation.residual import compute_residual
 from v2a_inspect.audio_generation.routing import apply_default_routing
 from v2a_inspect.audio_generation.mix import (
     mix_audio_into_video,
@@ -431,6 +432,7 @@ async def run_audio_generation_pipeline(
         if not event_artifacts and not track_artifacts:
             raise ValueError("No audio files were generated. " + "; ".join(errors))
 
+        video_asset = await _refresh_residual(video_asset)
         video_asset = await _rebuild_audio_outputs(
             video_asset, audio_plan, event_artifacts, store, track_artifacts
         )
@@ -570,6 +572,21 @@ async def run_event_audio_regeneration_pipeline(
 
 
 _TRACK_LEVEL_MODELS = ("separate", "selsync")
+
+
+async def _refresh_residual(video_asset: VideoAsset) -> VideoAsset:
+    if not (
+        video_asset.has_audio
+        and video_asset.original_audio_path
+        and video_asset.separated_stem_paths
+    ):
+        return video_asset
+    stems = [p for p in video_asset.separated_stem_paths.values() if p.exists()]
+    out_path = _audio_work_root(video_asset) / "audio" / "residual.wav"
+    await asyncio.to_thread(
+        compute_residual, video_asset.original_audio_path, stems, out_path
+    )
+    return video_asset.model_copy(update={"residual_path": out_path})
 
 
 async def _set_track_status(
