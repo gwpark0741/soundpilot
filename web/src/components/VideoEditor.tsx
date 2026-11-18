@@ -32,6 +32,16 @@ interface VideoEditorProps {
   ) => Promise<void> | void;
 }
 
+export function regenerateBlockedReason(hasTimelineEdits: boolean, status: string): string | null {
+  if (hasTimelineEdits) {
+    return "Save Changes first. Regenerating now would discard your other unsaved edits.";
+  }
+  if (status === "running") {
+    return "Wait for the current run to finish.";
+  }
+  return null;
+}
+
 export default function VideoEditor({
   state,
   submitError,
@@ -357,7 +367,7 @@ export default function VideoEditor({
     soundEventId: string,
     isSpeech: boolean,
   ) {
-    if (!onRegenerateEventAudio || state.status === "running") {
+    if (!onRegenerateEventAudio || regenerateBlockedReason(hasTimelineEdits, state.status)) {
       return;
     }
     const fd = new FormData(form);
@@ -374,7 +384,8 @@ export default function VideoEditor({
         spokenText || null,
         serverUrl,
       );
-    } catch {
+    } catch (error) {
+      setExportStatus(error instanceof Error ? error.message : String(error));
       return;
     }
     submitEditSoundEventDetails(soundEventId, description, spokenText);
@@ -1142,6 +1153,7 @@ export default function VideoEditor({
             (item) => item.sound_track_id === row.sound_track_id,
           );
           const isSpeech = soundTrack?.track_type === "speech";
+          const regenerateReason = regenerateBlockedReason(hasTimelineEdits, state.status);
           const eventAudio = audioEventArtifacts.find((item) => item.sound_event_id === editingEventId);
           return (
             <div className="event-dialog-backdrop">
@@ -1211,7 +1223,7 @@ export default function VideoEditor({
                   <button
                     type="button"
                     className="secondary"
-                    disabled={state.status === "running"}
+                    disabled={regenerateReason !== null}
                     onClick={(event) => {
                       const form = event.currentTarget.form;
                       if (form) {
@@ -1223,6 +1235,7 @@ export default function VideoEditor({
                   </button>
                   <button type="submit">Save Changes</button>
                 </div>
+                {regenerateReason ? <p role="status" className="muted">{regenerateReason}</p> : null}
               </form>
             </div>
           );
