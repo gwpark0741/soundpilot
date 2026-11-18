@@ -231,7 +231,7 @@ Audyssey를 대신 시연하지 않는 이유: SAM3로 물체를 추적하는 �
 
 1차의 "원음 유무로 모든 트랙 방식을 덮어쓰기"(`apply_default_routing`)를 없애고 아래로 바꾼다. 발표 내용이 생성 기반이므로 **생성이 기본이자 메인**이다.
 
-- **방식은 분석 뒤에 고른다(Audyssey의 start {method}와 같은 구조).** 상단 바에 `[Generate | Separate]` 선택. 기본 Generate. Separate는 원음 영상에서만 고를 수 있다(무음이면 비활성 + "No original audio to separate."). 주 버튼 문구가 방식을 따른다(Generate audio / Separate audio). 방식을 바꾸면 트랙 방식이 다시 정해지고, 주 버튼을 누르면 새 방식으로 전체를 만든다.
+- **방식은 분석 뒤에 고른다(Audyssey의 start {method}와 같은 구조).** 상단 바에 `[Generate | Separate]` 선택. 기본 Generate. Separate는 원음 영상에서만 고를 수 있다(무음이면 비활성 + "No original audio to separate."). 주 버튼 문구가 방식을 따른다(Generate audio / Separate audio). 방식을 바꾸면 방식 값만 저장되고, 주 버튼을 누를 때 트랙 방식을 다시 정해 새 방식으로 전체를 만든다(바꾼 직후 개별 트랙 작업이 다른 트랙의 소리를 지우지 않도록, 최종 리뷰 반영).
 - **생성: 에이전트 라우팅대로 모델을 고른다.** v2a → SelVA w/ SelSync(트랙 단위), t2a → ElevenLabs SFX(이벤트 단위), tts → ElevenLabs TTS(이벤트 단위; Kokoro는 설정으로 고를 수 있는 대안, 조용한 대체 없음). 에이전트가 고른 모델은 트랙에 `agent_model`로 보관해 방식을 오가도 잃지 않는다.
 - **t2a 늘리기:** (1) 코드 규칙 — 앰비언스 트랙, 원천이 `scene_global`·`offscreen_unknown`인 비대사 트랙은 t2a. (2) 프롬프트 — v2a는 연결된 시각 물체의 움직임에서 나는 짧은 접촉음(타격, 발소리, 떨어짐)일 때만; 휘두르는 바람 소리, 신음·숨소리, 이어지는 질감, 화면 밖 소리는 t2a; "프레임 단위로 정확히"는 이벤트 시점 규칙이지 모델 선택 근거가 아님.
 - **분리: 모든 트랙(배경음 포함)을 원음에서 분리한다.** 나머지 소리 스위치는 기본 꺼짐(배경음만 예외로 두는 근거가 없음 — Audyssey 기록상 앰비언스 Judge 점수가 오히려 높았다).
