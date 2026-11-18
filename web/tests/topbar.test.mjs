@@ -28,7 +28,7 @@ test("TopBar shows the input badge, status line and a single primary button", as
   const { default: TopBar } = await server.ssrLoadModule("/src/components/TopBar.tsx");
   const render = (props) =>
     renderToStaticMarkup(
-      createElement(TopBar, { hasAudio: true, state: base, canGenerate: true, onOpen() {}, onGenerate() {}, ...props }),
+      createElement(TopBar, { hasAudio: true, state: base, canGenerate: true, audioMode: "generate", onSetMode() {}, onOpen() {}, onGenerate() {}, ...props }),
     );
   const primaries = (html) => (html.match(/class="btn primary"/g) ?? []).length;
 
@@ -60,4 +60,22 @@ test("TopBar shows the input badge, status line and a single primary button", as
   assert.match(failed, /Tools server unreachable\./);
 
   assert.match(render({ canGenerate: false }), /<button[^>]*disabled[^>]*>Generate audio</);
+
+  // mode choice: a radiogroup left of the one primary button
+  assert.match(idle, /role="radiogroup"/);
+  assert.match(idle, /role="radio"[^>]*aria-checked="true"[^>]*>Generate</);
+  assert.match(idle, /role="radio"[^>]*aria-checked="false"[^>]*>Separate</);
+  assert.ok(idle.indexOf('role="radiogroup"') < idle.indexOf('class="btn primary"'));
+
+  const silent = render({ hasAudio: false });
+  assert.match(silent, /<button[^>]*role="radio"[^>]*disabled[^>]*title="No original audio to separate\."[^>]*>Separate</);
+  assert.doesNotMatch(silent, /<button[^>]*role="radio"[^>]*disabled[^>]*>Generate</);
+
+  const separate = render({ audioMode: "separate" });
+  assert.match(separate, /<button[^>]*class="btn primary"[^>]*>Separate audio</);
+  assert.match(separate, /role="radio"[^>]*aria-checked="true"[^>]*>Separate</);
+  assert.equal(primaries(separate), 1);
+
+  const busy = render({ state: { ...base, status: "running", stage: "analyze scenes" } });
+  assert.equal((busy.match(/<button[^>]*role="radio"[^>]*disabled/g) ?? []).length, 2);
 });

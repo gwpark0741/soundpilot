@@ -8,6 +8,7 @@ import {
   generateAudio,
   regenerateEventAudio,
   regenerateTrackAudio,
+  setAudioMode,
   setResidualEnabled,
 } from "./api";
 import { failure } from "./lib/errors";
@@ -123,21 +124,28 @@ export default function App() {
 
   async function handleRegenerateTrack(
     trackId: string,
-    method: "separate" | "selsync",
+    method: "separate" | "generate",
     description: string | null,
   ) {
     setSubmitError(null);
     try {
-      await regenerateTrackAudio(
-        trackId,
-        method === "selsync" ? "generate" : method,
-        description ?? undefined,
-      );
+      await regenerateTrackAudio(trackId, method, description ?? undefined);
       await refreshAssetSummary();
     } catch (error) {
       // Top line: short summary. The full message goes next to the failed control.
       setSubmitError("Could not regenerate the track.");
       throw new Error(failure("Could not regenerate the track.", error, "Press Regenerate to try again."));
+    }
+  }
+
+  async function handleSetAudioMode(mode: "generate" | "separate") {
+    setSubmitError(null);
+    try {
+      await setAudioMode(mode);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(failure("Could not change the audio method.", error, "Try again in a moment."));
+      throw error;
     }
   }
 
@@ -164,6 +172,7 @@ export default function App() {
       onGenerateAudio={handleGenerateAudio}
       onRegenerateEventAudio={handleRegenerateEventAudio}
       onRegenerateTrack={handleRegenerateTrack}
+      onSetAudioMode={handleSetAudioMode}
       onSetResidual={handleSetResidual}
     />
   );

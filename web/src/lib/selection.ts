@@ -1,4 +1,4 @@
-import type { GenerationModel, TrackStatus } from "../types";
+import type { GenerationModel, SoundTrack, TrackStatus } from "../types";
 
 // Order follows the approved mockup (--c-player, --c-enemy, --c-none).
 const OBJECT_COLORS = ["#4cc9f0", "#ff7ab6"];
@@ -14,16 +14,41 @@ export function highlightFor(trackId: string | null, targets: Record<string, str
 
 export function methodLabel(
   model: GenerationModel,
-): "Separated" | "SelVA w/ SelSync" | "TTS" | "ElevenLabs" | "Hunyuan" {
-  return { separate: "Separated", selsync: "SelVA w/ SelSync", tts: "TTS", t2a: "ElevenLabs", v2a: "Hunyuan" }[model] as ReturnType<typeof methodLabel>;
+): "Separated" | "SelVA w/ SelSync" | "ElevenLabs TTS" | "ElevenLabs" | "Hunyuan" {
+  return {
+    separate: "Separated",
+    selsync: "SelVA w/ SelSync",
+    tts: "ElevenLabs TTS",
+    t2a: "ElevenLabs",
+    v2a: "Hunyuan",
+  }[model] as ReturnType<typeof methodLabel>;
+}
+
+// Mirrors the backend's generate-mode routing (audio_generation/routing.py), so a separated track can say
+// what "Generate instead" will use. Keep in sync with generation_route / backfill_agent_model.
+export function generationLabel(
+  track: Pick<SoundTrack, "track_type" | "agent_model" | "generation_model">,
+  sourceType?: string,
+): "SelVA w/ SelSync" | "ElevenLabs" | "ElevenLabs TTS" {
+  if (track.track_type === "speech") return "ElevenLabs TTS";
+  if (track.track_type === "ambience" || sourceType === "scene_global" || sourceType === "offscreen_unknown") {
+    return "ElevenLabs";
+  }
+  const gm = track.generation_model;
+  const agent = track.agent_model ?? (gm === "t2a" || gm === "v2a" || gm === "tts" ? gm : "v2a");
+  return agent === "v2a" ? "SelVA w/ SelSync" : agent === "tts" ? "ElevenLabs TTS" : "ElevenLabs";
 }
 
 export type TrackAction = "re-separate" | "generate-instead" | "regenerate";
 
-export function trackActions(model: GenerationModel, hasAudio: boolean, trackType: string): TrackAction[] {
+export function trackActions(model: GenerationModel, hasAudio: boolean, _trackType: string): TrackAction[] {
   if (model === "separate") return ["re-separate", "generate-instead"];
-  if (model === "selsync" && trackType !== "speech") return hasAudio ? ["regenerate", "re-separate"] : ["regenerate"];
+  if (model === "selsync" || model === "t2a" || model === "tts") return hasAudio ? ["regenerate", "re-separate"] : ["regenerate"];
   return [];
+}
+
+export function actionMethod(action: TrackAction): "separate" | "generate" {
+  return action === "re-separate" ? "separate" : "generate";
 }
 
 export function statusView(

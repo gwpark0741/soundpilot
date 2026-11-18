@@ -32,9 +32,10 @@ interface VideoEditorProps {
   ) => Promise<void> | void;
   onRegenerateTrack?: (
     trackId: string,
-    method: "separate" | "selsync",
+    method: "separate" | "generate",
     description: string | null,
   ) => Promise<void> | void;
+  onSetAudioMode?: (mode: "generate" | "separate") => Promise<void> | void;
   onSetResidual?: (enabled: boolean) => Promise<void> | void;
 }
 
@@ -65,6 +66,7 @@ export default function VideoEditor({
   onGenerateAudio,
   onRegenerateEventAudio,
   onRegenerateTrack,
+  onSetAudioMode,
   onSetResidual,
 }: VideoEditorProps) {
   const [frame, setFrame] = useState(0);
@@ -524,6 +526,17 @@ export default function VideoEditor({
     return true;
   }
 
+  async function changeAudioMode(mode: "generate" | "separate") {
+    try {
+      await onSetAudioMode?.(mode);
+    } catch {
+      return;
+    }
+    // Unsaved timeline edits keep the loaded draft, which Generate audio sends back: it must carry the new mode.
+    setBaseAsset((asset) => (asset ? { ...asset, audio_mode: mode } : asset));
+    setDraftAsset((asset) => (asset ? { ...asset, audio_mode: mode } : asset));
+  }
+
   async function submitGenerateAudio() {
     if (!onGenerateAudio) {
       return;
@@ -583,6 +596,8 @@ export default function VideoEditor({
         state={state}
         submitError={dialogOpen ? null : submitError}
         canGenerate={!!video}
+        audioMode={baseAsset?.audio_mode ?? "generate"}
+        onSetMode={(mode) => void changeAudioMode(mode)}
         onOpen={() => {
           setStaleDialogError(submitError);
           setDialogOpen(true);
@@ -639,6 +654,7 @@ export default function VideoEditor({
             appRunning={state.status === "running"}
             blockedReason={regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)}
             hasAudio={baseAsset?.has_audio ?? false}
+            sourceType={soundSources?.find((source) => source.sound_source_id === selectedTrack.sound_source_id)?.source_type}
             residualEnabled={baseAsset?.residual_enabled ?? false}
             objectColor={highlightColor}
             error={panelError}

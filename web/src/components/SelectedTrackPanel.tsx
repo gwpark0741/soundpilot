@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import Icon, { STATUS_ICON } from "./Icon";
 import { trackFailureText } from "../lib/errors";
-import { methodLabel, statusView, trackActions, type TrackAction } from "../lib/selection";
+import { actionMethod, generationLabel, methodLabel, statusView, trackActions, type TrackAction } from "../lib/selection";
 import type { AudioTrackArtifact, SoundEvent, SoundTrack, TrackStatus } from "../types";
 
 interface SelectedTrackPanelProps {
@@ -11,6 +11,8 @@ interface SelectedTrackPanelProps {
   appRunning: boolean;
   blockedReason: string | null;
   hasAudio: boolean;
+  // source_type of the track's sound source; decides what "Generate instead" would use.
+  sourceType?: string;
   residualEnabled: boolean;
   objectColor: string;
   // Failure of the last action started from this panel, shown next to the controls.
@@ -18,17 +20,17 @@ interface SelectedTrackPanelProps {
   // Unsaved timeline edits can be dropped from here, since they are what blocks Regenerate.
   hasUnsavedEdits?: boolean;
   onDiscardEdits?: () => void;
-  onRegenerate: (method: "separate" | "selsync", description: string | null) => void;
+  onRegenerate: (method: "separate" | "generate", description: string | null) => void;
   onSetResidual: (enabled: boolean) => void;
   events: SoundEvent[];
   onRegenerateEvent: (eventId: string, description: string, spokenText: string | null) => void;
 }
 
 const STATUS_CLASS = { ok: "done", run: "run", wait: "queue", err: "fail" } as const;
-const ACTION_VIEW: Record<TrackAction, { label: string; method: "separate" | "selsync" }> = {
-  "re-separate": { label: "Re-separate", method: "separate" },
-  "generate-instead": { label: "Generate instead", method: "selsync" },
-  regenerate: { label: "Regenerate", method: "selsync" },
+const ACTION_LABEL: Record<TrackAction, string> = {
+  "re-separate": "Re-separate",
+  "generate-instead": "Generate instead",
+  regenerate: "Regenerate",
 };
 
 function EventRow({
@@ -79,6 +81,7 @@ export default function SelectedTrackPanel({
   appRunning,
   blockedReason,
   hasAudio,
+  sourceType,
   residualEnabled,
   objectColor,
   error = null,
@@ -101,7 +104,29 @@ export default function SelectedTrackPanel({
       : artifact?.seed != null ? `Seed ${artifact.seed}` : null;
   const whyId = `${uid}-why`;
   const blocked = blockedReason !== null;
-  const eventLevel = actions.length === 0;
+  // t2a/tts tracks generate one clip per event from the event's own description, so only those are editable.
+  const eventLevel = track.generation_model !== "separate" && track.generation_model !== "selsync";
+  const actionButtons = (
+    <div className="actions">
+      {actions.map((action) => (
+        <button
+          key={action}
+          type="button"
+          className="btn sm"
+          disabled={blocked}
+          aria-describedby={blocked ? whyId : undefined}
+          onClick={() =>
+            onRegenerate(actionMethod(action), eventLevel || description === original ? null : description)
+          }
+        >
+          {ACTION_LABEL[action]}
+        </button>
+      ))}
+      {track.generation_model === "separate" ? (
+        <span className="hint">Generates with {generationLabel(track, sourceType)}</span>
+      ) : null}
+    </div>
+  );
 
   return (
     <section className="side" aria-label="Selected track">
@@ -136,37 +161,27 @@ export default function SelectedTrackPanel({
           </div>
         ) : null}
         {eventLevel ? (
-          <ul className="events">
-            {events.map((event) => (
-              <EventRow
-                key={event.sound_event_id}
-                event={event}
-                disabled={blocked}
-                describedBy={whyId}
-                onRegenerate={onRegenerateEvent}
-              />
-            ))}
-          </ul>
+          <>
+            {actionButtons}
+            <ul className="events">
+              {events.map((event) => (
+                <EventRow
+                  key={event.sound_event_id}
+                  event={event}
+                  disabled={blocked}
+                  describedBy={whyId}
+                  onRegenerate={onRegenerateEvent}
+                />
+              ))}
+            </ul>
+          </>
         ) : (
           <>
             <div className="desc">
               <label htmlFor={`${uid}-desc`}>Description</label>
               <textarea id={`${uid}-desc`} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
             </div>
-            <div className="actions">
-              {actions.map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  className="btn sm"
-                  disabled={blocked}
-                  aria-describedby={blocked ? whyId : undefined}
-                  onClick={() => onRegenerate(ACTION_VIEW[action].method, description === original ? null : description)}
-                >
-                  {ACTION_VIEW[action].label}
-                </button>
-              ))}
-            </div>
+            {actionButtons}
           </>
         )}
         {error ? (

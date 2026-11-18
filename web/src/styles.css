@@ -61,6 +61,9 @@ h1, h2, h3, p { margin: 0; }
 .top h1 { font-size: 0.9375rem; font-weight: 650; letter-spacing: -0.01em; }
 .brand { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-inline-end: 4px; }
 .top-btns { display: flex; gap: 8px; }
+.modes { display: flex; gap: 4px; }
+.modes .btn { min-height: 26px; padding: 0 10px; font-size: 0.8125rem; border-radius: var(--r-ctl); }
+.modes .btn[aria-checked="true"] { background: #2b3040; border-color: var(--text); font-weight: 600; }
 .in-badge { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border-radius: var(--r-ctl); background: var(--raise); border: 1px solid var(--ctl-border); color: var(--text); font-size: 0.75rem; font-weight: 500; white-space: nowrap; }
 .status { flex: 1 1 260px; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-ctl); }
 .status-t { flex: 1; min-width: 0; display: grid; gap: 4px; }
@@ -118,6 +121,7 @@ h1, h2, h3, p { margin: 0; }
 .desc textarea { font-size: 0.8125rem; width: 100%; resize: vertical; min-height: 44px; padding: 5px 8px; background: var(--bg); border: 1px solid var(--ctl-border); border-radius: var(--r-ctl); line-height: 1.4; }
 .events { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .actions .btn { min-height: 32px; }
+.actions .hint { color: var(--muted); font-size: 0.75rem; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .tl > :last-child { border-bottom: 0; }
 .resid { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 12px; background: var(--panel); border: 1px dashed var(--ctl-border); border-radius: var(--r-panel); flex-wrap: wrap; }
@@ -210,5 +214,7 @@ h1, h2, h3, p { margin: 0; }
   .top > .btn.primary { flex: 1 1 100%; }
   .top .top-btns { flex: 1 1 100%; }
   .top .top-btns .btn { flex: 1; }
+  .top .modes { flex: 1 1 100%; }
+  .top .modes .btn { flex: 1; }
   .tick.t1, .tick.t3, .tick.t5, .tick.t7 { display: none; }
 }

@@ -12,11 +12,14 @@ test("selection helpers", async (context) => {
   const s = await server.ssrLoadModule("/src/lib/selection.ts");
 
   assert.deepEqual(s.trackActions("separate", true, "sfx"), ["re-separate", "generate-instead"]);
-  assert.deepEqual(s.trackActions("selsync", false, "sfx"), ["regenerate"]);
-  assert.deepEqual(s.trackActions("selsync", true, "sfx"), ["regenerate", "re-separate"]);
-  assert.deepEqual(s.trackActions("selsync", true, "speech"), []);
-  assert.deepEqual(s.trackActions("tts", false, "speech"), []);
-  assert.deepEqual(s.trackActions("t2a", true, "sfx"), []);
+  for (const model of ["selsync", "t2a", "tts"]) {
+    assert.deepEqual(s.trackActions(model, false, "sfx"), ["regenerate"]);
+    assert.deepEqual(s.trackActions(model, true, "sfx"), ["regenerate", "re-separate"]);
+  }
+  assert.deepEqual(s.trackActions("tts", true, "speech"), ["regenerate", "re-separate"]);
+  assert.equal(s.actionMethod("re-separate"), "separate");
+  assert.equal(s.actionMethod("generate-instead"), "generate");
+  assert.equal(s.actionMethod("regenerate"), "generate");
 
   assert.equal(s.statusView(undefined, false).label, null);
   assert.equal(s.statusView({ state: "done" }, false).label, "Done");
@@ -37,9 +40,23 @@ test("selection helpers", async (context) => {
 
   assert.equal(s.methodLabel("separate"), "Separated");
   assert.equal(s.methodLabel("selsync"), "SelVA w/ SelSync");
-  assert.equal(s.methodLabel("tts"), "TTS");
+  assert.equal(s.methodLabel("tts"), "ElevenLabs TTS");
   assert.equal(s.methodLabel("t2a"), "ElevenLabs");
   assert.equal(s.methodLabel("v2a"), "Hunyuan");
+
+  // generationLabel mirrors the backend's generate-mode routing (agent_model unless a rule overrides)
+  const t = (track_type, agent_model, generation_model = "separate") => ({ track_type, agent_model, generation_model });
+  assert.equal(s.generationLabel(t("speech", "v2a")), "ElevenLabs TTS");
+  assert.equal(s.generationLabel(t("ambience", "v2a")), "ElevenLabs");
+  assert.equal(s.generationLabel(t("sfx", "v2a"), "scene_global"), "ElevenLabs");
+  assert.equal(s.generationLabel(t("sfx", "v2a"), "offscreen_unknown"), "ElevenLabs");
+  assert.equal(s.generationLabel(t("sfx", "v2a"), "visible_object"), "SelVA w/ SelSync");
+  assert.equal(s.generationLabel(t("sfx", "t2a")), "ElevenLabs");
+  assert.equal(s.generationLabel(t("sfx", "tts")), "ElevenLabs TTS");
+  // old assets without agent_model: filled from generation_model, else from the track type
+  assert.equal(s.generationLabel(t("sfx", null, "v2a")), "SelVA w/ SelSync");
+  assert.equal(s.generationLabel(t("sfx", undefined, "t2a")), "ElevenLabs");
+  assert.equal(s.generationLabel(t("sfx", null, "separate")), "SelVA w/ SelSync");
 });
 
 test("reconcileSelection resets a stale id; soloToggleAction restarts playback only when playing", async (context) => {

@@ -7,6 +7,8 @@ interface TopBarProps {
   // Detail of a failed action (e.g. an upload) that the open dialog may not be showing.
   submitError?: string | null;
   canGenerate: boolean;
+  audioMode: "generate" | "separate";
+  onSetMode: (mode: "generate" | "separate") => void;
   onOpen: () => void;
   onGenerate: () => void;
 }
@@ -20,7 +22,12 @@ interface StatusView {
   progress?: { now: number; max: number } | null;
 }
 
-function statusView(state: AssetResponse, hasAudio: boolean | null, submitError: string | null): StatusView {
+function statusView(
+  state: AssetResponse,
+  hasAudio: boolean | null,
+  submitError: string | null,
+  action: string,
+): StatusView {
   if (state.status === "running") {
     const progress = state.stage?.match(/(\d+)\s*(?:\/|of)\s*(\d+)/);
     const text = state.stage
@@ -48,13 +55,28 @@ function statusView(state: AssetResponse, hasAudio: boolean | null, submitError:
   return {
     kind: "done",
     icon: "info",
-    text: state.video ? "Ready. Press Generate audio." : "Open a video to start.",
+    text: state.video ? `Ready. Press ${action}.` : "Open a video to start.",
   };
 }
 
-export default function TopBar({ hasAudio, state, submitError = null, canGenerate, onOpen, onGenerate }: TopBarProps) {
+const MODES = [
+  { mode: "generate", label: "Generate" },
+  { mode: "separate", label: "Separate" },
+] as const;
+
+export default function TopBar({
+  hasAudio,
+  state,
+  submitError = null,
+  canGenerate,
+  audioMode,
+  onSetMode,
+  onOpen,
+  onGenerate,
+}: TopBarProps) {
   const running = state.status === "running";
-  const view = statusView(state, hasAudio, submitError);
+  const action = audioMode === "separate" ? "Separate audio" : "Generate audio";
+  const view = statusView(state, hasAudio, submitError, action);
   return (
     <header className="top">
       <div className="brand">
@@ -88,8 +110,27 @@ export default function TopBar({ hasAudio, state, submitError = null, canGenerat
           ) : null}
         </div>
       </div>
+      <div className="modes" role="radiogroup" aria-label="Audio method">
+        {MODES.map(({ mode, label }) => {
+          const noAudio = mode === "separate" && hasAudio === false;
+          return (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={audioMode === mode}
+              className="btn"
+              disabled={running || noAudio}
+              title={noAudio ? "No original audio to separate." : undefined}
+              onClick={() => onSetMode(mode)}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
       <button className="btn primary" type="button" disabled={running || !canGenerate} onClick={onGenerate}>
-        {running ? "Generating…" : "Generate audio"}
+        {running ? "Generating…" : action}
       </button>
     </header>
   );

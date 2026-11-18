@@ -49,6 +49,11 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   assert.match(m, /aria-checked="false"/);
   assert.match(m, /Include rest of original audio/);
 
+  // separated track tells which model "Generate instead" will use
+  assert.match(html({ track: track({ agent_model: "v2a" }) }), /Generates with SelVA w\/ SelSync/);
+  assert.match(html({ track: track({ agent_model: "v2a" }), sourceType: "scene_global" }), /Generates with ElevenLabs</);
+  assert.match(html({ track: track({ agent_model: "tts", track_type: "speech" }) }), /Generates with ElevenLabs TTS/);
+
   // selsync track, audio video: Regenerate + Re-separate
   m = html({
     track: track({ generation_model: "selsync" }),
@@ -89,14 +94,19 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   assert.match(m, /Generating 2 of 4\. Actions are unavailable until it finishes\./);
   assert.equal((m.match(/<button[^>]*disabled/g) ?? []).length >= 3, true);
 
-  // event-level track lists events with Regenerate
-  m = html({
-    track: track({ generation_model: "tts", track_type: "speech", label: "Voice" }),
-    events: [{ sound_event_id: "e1", sound_track_id: "t1", start_frame_index: 0, end_frame_index: 9, description: "Hello", spoken_text: "Hi there" }],
-  });
+  // event-level track: track Regenerate (+ Re-separate with audio), editable per-event descriptions, no track description
+  const events = [{ sound_event_id: "e1", sound_track_id: "t1", start_frame_index: 0, end_frame_index: 9, description: "Hello", spoken_text: "Hi there" }];
+  m = html({ track: track({ generation_model: "tts", track_type: "speech", label: "Voice" }), events });
   assert.match(m, /Hi there/);
-  assert.match(m, />Regenerate</);
+  assert.match(m, /Hello/);
+  assert.equal((m.match(/Description<\/label>/g) ?? []).length, 1);  // the event's, not the track's
+  assert.ok((m.match(/>Regenerate</g) ?? []).length === 2);  // track + event
+  assert.match(m, />Re-separate</);
+  m = html({ track: track({ generation_model: "t2a" }), events, hasAudio: false });
+  assert.ok((m.match(/>Regenerate</g) ?? []).length === 2);
   assert.doesNotMatch(m, /Re-separate/);
+  // track-level tracks keep their own description
+  assert.equal((html({ track: track({ generation_model: "selsync" }) }).match(/Description<\/label>/g) ?? []).length, 1);
 
   // unsaved edits block Regenerate: Discard edits is offered next to the reason, not primary
   const edits = "Unsaved timeline edits. Generate audio to apply them or discard.";
