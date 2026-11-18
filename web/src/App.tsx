@@ -128,7 +128,11 @@ export default function App() {
   ) {
     setSubmitError(null);
     try {
-      await regenerateTrackAudio(trackId, method, description ?? undefined);
+      await regenerateTrackAudio(
+        trackId,
+        method === "selsync" ? "generate" : method,
+        description ?? undefined,
+      );
       await refreshAssetSummary();
     } catch (error) {
       // Top line: short summary. The full message goes next to the failed control.

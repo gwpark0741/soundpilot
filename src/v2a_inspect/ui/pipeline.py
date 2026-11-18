@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import secrets
+import shutil
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +39,11 @@ from v2a_inspect.audio_generation.audyssey import (
 from v2a_inspect.audio_generation.client import generate_audio_for_item
 from v2a_inspect.audio_generation.plan import build_audio_plan
 from v2a_inspect.audio_generation.residual import compute_residual
-from v2a_inspect.audio_generation.routing import route_tracks
+from v2a_inspect.audio_generation.routing import (
+    backfill_agent_model,
+    generation_route,
+    route_tracks,
+)
 from v2a_inspect.audio_generation.mix import (
     mix_audio_into_video,
     mix_audio_items_to_wav,
@@ -613,7 +619,7 @@ async def run_track_regeneration_pipeline(
     video_asset: VideoAsset,
     store: VideoAssetStore,
     sound_track_id: str,
-    method: Literal["separate", "selsync"],
+    method: Literal["separate", "generate"],
     description: str | None,
     seed: int | None,
 ) -> None:
@@ -630,7 +636,16 @@ async def run_track_regeneration_pipeline(
         track_id = track.sound_track_id
 
         original_model = track.generation_model
-        update: dict[str, object] = {"generation_model": method}
+        track = backfill_agent_model(track)
+        # "generate" follows the agent's routing for this one track.
+        route = (
+            "separate"
+            if method == "separate"
+            else generation_route(
+                track, {s.sound_source_id: s for s in timeline.sound_sources}
+            )
+        )
+        update: dict[str, object] = {"generation_model": route}
         if description and description.strip():
             update["description"] = description.strip()
         track = track.model_copy(update=update)
@@ -661,16 +676,22 @@ async def run_track_regeneration_pipeline(
             video_asset, store, track_id, TrackStatus(state="running")
         )
         try:
-            artifact = await _generate_track_stem(
-                video_asset,
-                track,
-                method=method,
-                description=track_description(track, events),
-                seed=secrets.randbelow(2**31) if seed is None else seed,
-                attempt=((previous.attempt if previous else None) or 0) + 1,
-                out_dir=track_dir,
-            )
-        except Exception as exc:  # noqa: BLE001 - keep previous stem, surface error.
+            if route in _TRACK_LEVEL_MODELS:
+                artifact = await _generate_track_stem(
+                    video_asset,
+                    track,
+                    method=route,
+                    description=track_description(track, events),
+                    seed=secrets.randbelow(2**31) if seed is None else seed,
+                    attempt=((previous.attempt if previous else None) or 0) + 1,
+                    out_dir=track_dir,
+                )
+                new_stems, new_events = [artifact], []
+            else:
+                new_stems, new_events = [], await _generate_track_event_artifacts(
+                    video_asset, track
+                )
+        except Exception as exc:  # noqa: BLE001 - keep previous audio, surface error.
             # Failed switch: keep the edited description but restore the model.
             restored = track.model_copy(update={"generation_model": original_model})
             video_asset = video_asset.model_copy(
@@ -693,28 +714,29 @@ async def run_track_regeneration_pipeline(
             return
 
         separated = dict(video_asset.separated_stem_paths)
-        if method == "separate":
-            separated[track_id] = artifact.path
+        if route == "separate":
+            separated[track_id] = new_stems[0].path
         video_asset = video_asset.model_copy(update={"separated_stem_paths": separated})
         video_asset = await _refresh_residual(video_asset)
         video_asset = await _set_track_status(
             video_asset, store, track_id, TrackStatus(state="done")
         )
 
+        # Only this track's audio changes; its old stem/events are dropped so it is
+        # not mixed twice (a stem-level track keeps no events, an event-level no stem).
         stems = [
             a
             for a in video_asset.sound_track_audio_artifacts
             if a.origin != "mixed" and a.sound_track_id != track_id
-        ] + [artifact]
+        ] + new_stems
         audio_plan = build_audio_plan(
             timeline, fps=video_asset.fps, total_duration=video_asset.duration_sec
         )
-        # The track is now stem-level: drop its old event WAVs so it is not mixed twice.
         event_artifacts = [
             a
             for a in video_asset.sound_event_audio_artifacts
             if a.sound_track_id != track_id
-        ]
+        ] + new_events
         video_asset = await _rebuild_audio_outputs(
             video_asset, audio_plan, event_artifacts, store, stems
         )
@@ -830,6 +852,42 @@ async def _generate_track_stem(
         attempt=attempt if method == "separate" else None,
         description=description,
     )
+
+
+async def _generate_track_event_artifacts(
+    video_asset: VideoAsset, track: SoundTrack
+) -> list[SoundEventAudioArtifact]:
+    """Regenerate every event of a track; files only replace the old ones if all succeed."""
+    timeline = video_asset.sound_timeline
+    plan = build_audio_plan(
+        timeline, fps=video_asset.fps, total_duration=video_asset.duration_sec
+    )
+    context = _audio_item_context(timeline, plan)
+    items = [i for i in plan.items if i.track_id == str(track.sound_track_id)]
+    if not items:
+        raise ValueError("No audio items to generate.")
+    event_dir = _audio_work_root(video_asset) / "audio" / "events"
+    staging = event_dir / f".regen_{_short_id(track.sound_track_id)}"
+    staging.mkdir(parents=True, exist_ok=True)
+    try:
+        staged = []
+        for item in items:
+            event, item_track = context[item.item_id]
+            artifact = await _generate_event_audio_artifact(
+                item, event, item_track, staging,
+                video_id=None, fps=video_asset.fps, server_url=None,
+            )
+            if artifact is None:
+                raise ValueError("No audio file was generated.")
+            staged.append((item, artifact))
+        artifacts = []
+        for item, artifact in staged:
+            final = _event_audio_path(event_dir, item.item_id, track.label)
+            os.replace(artifact.path, final)
+            artifacts.append(artifact.model_copy(update={"path": final}))
+        return artifacts
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 async def _generate_event_audio_artifact(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -95,14 +96,24 @@ class TrackRouteTest(unittest.TestCase):
             ) as pipeline:
                 response = client.post(
                     f"/api/audio/tracks/{track.sound_track_id}/regenerate",
-                    data={"method": "selsync", "description": "creak", "seed": "7"},
+                    data={"method": "generate", "description": "creak", "seed": "7"},
                 )
 
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json(), {"status": "queued"})
             args = pipeline.call_args.args
             self.assertEqual(args[1], store)
-            self.assertEqual(args[2:], (str(track.sound_track_id), "selsync", "creak", 7))
+            self.assertEqual(args[2:], (str(track.sound_track_id), "generate", "creak", 7))
+
+            client, _ = self._client(asset)  # the first request left the store running
+            with patch(
+                "v2a_inspect.ui.routes.run_track_regeneration_pipeline"
+            ) as pipeline:
+                client.post(
+                    f"/api/audio/tracks/{track.sound_track_id}/regenerate",
+                    data={"method": "selsync"},
+                )
+            self.assertEqual(pipeline.call_args.args[3], "generate")
 
     def test_regenerate_track_missing_asset_or_track_is_404(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -137,7 +148,7 @@ class TrackRouteTest(unittest.TestCase):
             self.assertEqual(response.status_code, 422)
             p.assert_not_called()
 
-    def test_selsync_on_speech_track_is_422(self) -> None:
+    def test_generate_on_speech_track_queues(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             track = SoundTrack(track_type="speech", label="Voice", generation_model="tts")
             asset = VideoAsset(
@@ -149,11 +160,11 @@ class TrackRouteTest(unittest.TestCase):
             with patch("v2a_inspect.ui.routes.run_track_regeneration_pipeline") as p:
                 response = client.post(
                     f"/api/audio/tracks/{track.sound_track_id}/regenerate",
-                    data={"method": "selsync"},
+                    data={"method": "generate"},
                 )
 
-            self.assertEqual(response.status_code, 422)
-            p.assert_not_called()
+            self.assertEqual(response.status_code, 200)
+            p.assert_called_once()
 
     def test_set_mode_conflict_and_missing_asset(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -354,7 +365,7 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
             asset, track = _asset(Path(temp_dir))
             with patch("v2a_inspect.ui.pipeline.secrets.randbelow", return_value=999):
                 snapshot = self._run(
-                    asset, track, method="selsync", description="  creaky door  "
+                    asset, track, method="generate", description="  creaky door  "
                 )
 
             self.assertEqual(snapshot.status, "complete")
@@ -369,7 +380,7 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
                 snapshot.asset.track_status[track.sound_track_id].state, "done"
             )
 
-            explicit = self._run(asset, track, method="selsync", seed=1234)
+            explicit = self._run(asset, track, method="generate", seed=1234)
             (stem,) = explicit.asset.sound_track_audio_artifacts
             self.assertEqual(stem.seed, 1234)
 
@@ -415,7 +426,7 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
             asset = asset.model_copy(
                 update={"separated_stem_paths": {track.sound_track_id: old}}
             )
-            snapshot = self._run(asset, track, method="selsync", seed=5)
+            snapshot = self._run(asset, track, method="generate", seed=5)
 
             self.assertEqual(snapshot.status, "complete")
             self.assertEqual(
@@ -427,7 +438,7 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             asset, track = _asset(root)
-            track = track.model_copy(update={"generation_model": "t2a"})
+            track = track.model_copy(update={"generation_model": "t2a", "agent_model": "v2a"})
             event = asset.sound_timeline.sound_events[0]
             asset = asset.model_copy(
                 update={
@@ -457,7 +468,7 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
             ):
                 asyncio.run(
                     run_track_regeneration_pipeline(
-                        asset, store, str(track.sound_track_id), "selsync", None, None
+                        asset, store, str(track.sound_track_id), "generate", None, None
                     )
                 )
             snapshot = asyncio.run(store.snapshot())
@@ -492,7 +503,7 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
             ):
                 asyncio.run(
                     run_track_regeneration_pipeline(
-                        asset, store, str(track.sound_track_id), "selsync", None, None
+                        asset, store, str(track.sound_track_id), "generate", None, None
                     )
                 )
             snapshot = asyncio.run(store.snapshot())
@@ -526,7 +537,7 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
             ):
                 asyncio.run(
                     run_track_regeneration_pipeline(
-                        asset, store, str(track.sound_track_id), "selsync", "new", None
+                        asset, store, str(track.sound_track_id), "generate", "new", None
                     )
                 )
             snapshot = asyncio.run(store.snapshot())
@@ -534,6 +545,185 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
             self.assertEqual(snapshot.status, "failed")
             (shown,) = snapshot.asset.sound_timeline.sound_tracks
             self.assertEqual(shown.generation_model, "separate")
+
+    def _event_asset(self, root, *, agent, track_type="sfx", n_events=2, model="separate"):
+        track = SoundTrack(
+            track_type=track_type,
+            label="Door" if track_type == "sfx" else "Voice",
+            generation_model=model,
+            agent_model=agent,
+        )
+        events = [
+            SoundEvent(
+                sound_track_id=track.sound_track_id,
+                start_frame_index=i * 30,
+                end_frame_index=i * 30 + 20,
+                description=f"event {i}",
+                spoken_text="hello" if track_type == "speech" else None,
+            )
+            for i in range(n_events)
+        ]
+        stem = SoundTrackAudioArtifact(
+            sound_track_id=track.sound_track_id,
+            track_label=track.label,
+            track_type=track_type,
+            path=_write_sine(root / "old_stem.wav"),
+            duration_sec=1.0,
+            event_count=n_events,
+            origin="separated",
+            attempt=1,
+        )
+        asset = VideoAsset(
+            source_path=root / "video.mp4",
+            frame_count=30 * n_events,
+            original_audio_path=_write_sine(root / "orig.wav"),
+            has_audio=True,
+            sound_timeline=SoundTimeline(sound_tracks=[track], sound_events=events),
+            sound_track_audio_artifacts=[stem],
+            separated_stem_paths={track.sound_track_id: stem.path},
+        )
+        return asset, track, stem
+
+    def _run_generate(self, asset, track, fake_generate):
+        store = VideoAssetStore()
+        asyncio.run(store.set_complete_asset(asset))
+        with (
+            patch("v2a_inspect.ui.pipeline.generate_track", side_effect=_fake_stem) as gen,
+            patch(
+                "v2a_inspect.ui.pipeline.generate_audio_for_item",
+                side_effect=fake_generate,
+            ) as items,
+            patch(
+                "v2a_inspect.ui.pipeline._convert_audio_to_wav",
+                side_effect=lambda src, dst: Path(shutil.copy(src, dst)),
+            ),
+            patch(
+                "v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix
+            ) as mix,
+        ):
+            asyncio.run(
+                run_track_regeneration_pipeline(
+                    asset, store, str(track.sound_track_id), "generate", None, None
+                )
+            )
+        return asyncio.run(store.snapshot()), gen, items, mix
+
+    @staticmethod
+    def _ok(**kw):
+        return str(_write_sine(Path(kw["out_path"])))
+
+    def test_generate_follows_agent_v2a_to_selsync_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, track, _ = self._event_asset(Path(temp_dir), agent="v2a")
+            snapshot, gen, items, _ = self._run_generate(asset, track, self._ok)
+
+            self.assertEqual(snapshot.status, "complete")
+            gen.assert_called_once()
+            items.assert_not_called()
+            (stem,) = snapshot.asset.sound_track_audio_artifacts
+            self.assertEqual(stem.origin, "generated")
+            (saved,) = snapshot.asset.sound_timeline.sound_tracks
+            self.assertEqual((saved.generation_model, saved.agent_model), ("selsync", "v2a"))
+
+    def test_generate_t2a_track_regenerates_events_and_remixes_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, track, old = self._event_asset(Path(temp_dir), agent="t2a")
+            snapshot, gen, items, mix = self._run_generate(asset, track, self._ok)
+
+            self.assertEqual(snapshot.status, "complete")
+            gen.assert_not_called()
+            self.assertEqual(items.call_count, 2)
+            self.assertEqual(
+                {c.kwargs["generation_model"] for c in items.call_args_list}, {"t2a"}
+            )
+            self.assertEqual(len(snapshot.asset.sound_event_audio_artifacts), 2)
+            # The old separated stem is gone; the stem is now the mix of the new events.
+            (stem,) = snapshot.asset.sound_track_audio_artifacts
+            self.assertEqual(stem.origin, "mixed")
+            self.assertNotEqual(stem.path, old.path)
+            self.assertEqual(stem.event_count, 2)
+            items_in_preview = mix.call_args.kwargs["audio_plan"].items
+            self.assertEqual([i.item_id for i in items_in_preview], [str(track.sound_track_id)])
+            (saved,) = snapshot.asset.sound_timeline.sound_tracks
+            self.assertEqual((saved.generation_model, saved.agent_model), ("t2a", "t2a"))
+            self.assertEqual(
+                snapshot.asset.track_status[track.sound_track_id].state, "done"
+            )
+            # Separated audio still counts toward the rest-of-original residual.
+            self.assertEqual(
+                snapshot.asset.separated_stem_paths, {track.sound_track_id: old.path}
+            )
+
+    def test_generate_speech_track_uses_tts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, track, _ = self._event_asset(
+                Path(temp_dir), agent="v2a", track_type="speech", n_events=1
+            )
+            snapshot, _, items, _ = self._run_generate(asset, track, self._ok)
+
+            self.assertEqual(snapshot.status, "complete")
+            (call,) = items.call_args_list
+            self.assertEqual(call.kwargs["generation_model"], "tts")
+            self.assertEqual(call.kwargs["spoken_text"], "hello")
+            (saved,) = snapshot.asset.sound_timeline.sound_tracks
+            self.assertEqual((saved.generation_model, saved.agent_model), ("tts", "v2a"))
+
+    def test_generate_event_failure_keeps_previous_events_and_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, track, old = self._event_asset(root, agent="t2a", model="t2a")
+            event_dir = root / "audio" / "events"
+            event_dir.mkdir(parents=True)
+            previous = []
+            for event in asset.sound_timeline.sound_events:
+                wav = _write_sine(event_dir / f"prev_{event.sound_event_id}.wav")
+                previous.append(
+                    SoundEventAudioArtifact(
+                        sound_event_id=event.sound_event_id,
+                        sound_track_id=track.sound_track_id,
+                        path=wav,
+                        duration_sec=1.0,
+                        generation_model="t2a",
+                        description="old",
+                    )
+                )
+            mixed = SoundTrackAudioArtifact(
+                sound_track_id=track.sound_track_id,
+                track_label="Door",
+                track_type="sfx",
+                path=old.path,
+                duration_sec=1.0,
+                event_count=2,
+            )
+            asset = asset.model_copy(
+                update={
+                    "sound_event_audio_artifacts": previous,
+                    "sound_track_audio_artifacts": [mixed],
+                    "separated_stem_paths": {},
+                }
+            )
+            before = [a.path.read_bytes() for a in previous]
+            calls = []
+
+            def flaky(**kw):
+                calls.append(kw)
+                if len(calls) == 2:
+                    raise RuntimeError("elevenlabs down")
+                return str(_write_sine(Path(kw["out_path"])))
+
+            with patch("v2a_inspect.ui.pipeline._audio_work_root", return_value=root):
+                snapshot, _, _, _ = self._run_generate(asset, track, flaky)
+
+            self.assertEqual(snapshot.status, "failed")
+            self.assertEqual(snapshot.error, "Door failed. Previous audio kept.")
+            status = snapshot.asset.track_status[track.sound_track_id]
+            self.assertEqual(status.state, "failed")
+            self.assertIn("elevenlabs down", status.error)
+            self.assertEqual(snapshot.asset.sound_event_audio_artifacts, previous)
+            self.assertEqual([a.path.read_bytes() for a in previous], before)
+            self.assertEqual(snapshot.asset.sound_track_audio_artifacts, [mixed])
+            (saved,) = snapshot.asset.sound_timeline.sound_tracks
+            self.assertEqual(saved.generation_model, "t2a")
 
 
 if __name__ == "__main__":

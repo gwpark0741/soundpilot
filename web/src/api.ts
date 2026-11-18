@@ -126,7 +126,7 @@ export async function regenerateEventAudio(
 
 export async function regenerateTrackAudio(
   trackId: string,
-  method: "separate" | "selsync",
+  method: "separate" | "generate",
   description?: string,
   seed?: number,
 ): Promise<void> {
