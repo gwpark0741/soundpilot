@@ -237,3 +237,4 @@ Audyssey를 대신 시연하지 않는 이유: SAM3로 물체를 추적하는 �
 - **분리: 모든 트랙(배경음 포함)을 원음에서 분리한다.** 나머지 소리 스위치는 기본 꺼짐(배경음만 예외로 두는 근거가 없음 — Audyssey 기록상 앰비언스 Judge 점수가 오히려 높았다).
 - **트랙별 교체:** 분리 트랙 [Generate instead] = 그 트랙의 `agent_model`대로 생성. 생성 트랙 [Regenerate] = 같은 모델로 다시(원음 영상이면 [Re-separate]도). 이벤트 단위 트랙은 이벤트별 재생성도 유지.
 - **확인:** 샘플로 에이전트를 1회 돌려(`gemini-4-hydrogen`) 규칙 적용 전후 라우팅 비율을 본다. 생성은 ElevenLabs·SelSync 실제 호출로 확인한다(유료·GPU, 실행 전 승인).
+- **TTS 보류(2026-11-19, 사용자 결정):** ElevenLabs TTS는 현재 계정 플랜에서 기본 보이스가 402(`paid_plan_required`)로 막힌다. 다음 날 Kokoro(`V2A_INSPECT_TTS_PROVIDER=kokoro`, 영어 전용)를 시도하고, 안 되면 시연에서 대사 트랙은 뺀다.
