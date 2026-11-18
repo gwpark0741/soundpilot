@@ -105,3 +105,43 @@
 - 3.5-flash는 트랙마다 전 구간 이벤트 1개라 타격·휘두르기를 잡지 못했다. 3.8-flash가 가장 풍부하지만 약 9배 느리다. 4-hydrogen은 비용이 3.5-flash와 비슷하면서 타격·휘두르기·발소리를 나눠 잡는다(시점은 대략적).
 - 선택: `gemini-4-hydrogen`. 문서 없는 코드명 모델이라 시연 당일 쓸 수 없으면 `gemini-3.5-flash`로 바꾼다.
 - 1회씩만 돌렸다. 시연 영상이 정해지면 선택 모델로 2~3회 더 돌려 안정성을 확인한다.
+
+## 라우팅 비율과 Generate/Separate 실측 (2026-11-18, Task 7)
+
+샘플(7.1초) 1회, `gemini-4-hydrogen`. GPU 6 한 장, 이미지 `audyssey-tools:demo-1117` 한 컨테이너(분리+생성). 이 표의 "에이전트"는 `agent_model`(에이전트 원래 판단), "라우팅"은 `route_tracks(mode="generate", has_audio=False)` 결과이다. 에이전트 실행은 39초.
+
+| 트랙 | 종류 | 원천 | 에이전트 | 라우팅 |
+|---|---|---|---|---|
+| Enemy Attack Whoosh | sfx | visual_object (#3) | t2a | t2a |
+| Player Footsteps | sfx | visual_object (#2) | v2a | selsync |
+| Player Body Impact | sfx | visual_object (#2) | v2a | selsync |
+| Arena Wind Ambience | ambience | scene_global | t2a | t2a |
+
+- 원천 3개 중 2개가 물체와 연결됨(#2 플레이어, #3 적). 에이전트가 v2a로 고른 트랙은 2개(둘 다 플레이어 접촉음)이고 모두 selsync로 갔다. 규칙(앰비언스·scene_global·offscreen → t2a)이 바꾼 트랙은 이번엔 없다. 대사 트랙이 없어 tts 경로는 타지 않았다.
+
+**Generate (무음 사본)**: `has_audio=false`, `audio_mode=generate` 확인, 전체 61초, 오류 없음, GPU 6 최대 약 5.9 GB.
+
+| 트랙 | 방식 | 상태 | 출처 | 완료 시점(시작 후) |
+|---|---|---|---|---|
+| Player Footsteps | selsync | 성공 | generated | 약 47초 (첫 호출, 모델 로딩 포함) |
+| Player Body Impact | selsync | 성공 | generated | 약 51초 |
+| Enemy Attack Whoosh | t2a (이벤트 3개) | 성공 | mixed | 약 55~57초 |
+| Arena Wind Ambience | t2a (이벤트 1개) | 성공 | mixed | 약 54~58초 |
+
+ElevenLabs 결과 이벤트 WAV 4개는 모두 RIFF/PCM 16bit 44.1 kHz 스테레오, 무음 아님(최대 -0.1 ~ -14.6 dBFS). 원본 응답 바이트는 가로채지 않았다(추가 유료 호출 방지).
+
+**Separate (원음 영상)**: 같은 자산을 가져와 `POST /api/audio/mode separate` → 전체 생성. 전체 164초, GPU 6 최대 약 36.6 GB(SAM Audio). 4개 트랙 모두 `generation_model=separate`, `agent_model` 불변(t2a/v2a/v2a/t2a), 출처 `separated`. 모드 전환 직후에는 트랙 방식이 그대로이고 다음 생성에서 바뀌는 것도 확인했다.
+
+**Generate instead (분리 상태에서 한 트랙)**:
+- Enemy Attack Whoosh (t2a 라우팅): 이벤트 단위 ElevenLabs로 3개 이벤트 재생성, 10초 이내, `generation_model` t2a, 출처 mixed, 이벤트 3개 생김. 다른 3개 트랙은 `separated` 그대로(파일도 그대로).
+- Player Footsteps (selsync 라우팅): 트랙 단위 selsync, 10초 이내, `generation_model` selsync, 출처 generated, 새 seed. 나머지 트랙 유지.
+- 두 경우 모두 `agent_model`은 처음 값 그대로.
+
+**TTS 직접 호출 (`generate_speech_elevenlabs("Get back here!")`) — 실패**: 402 `paid_plan_required` ("Free users cannot use library voices via the API"). 기본 voice id `21m00Tcm4TlvDq8ikWAM`(Rachel)는 현재 ElevenLabs 계정(무료 플랜)에서 API로 못 쓴다. RIFF 확인은 못 했다(승인된 호출 1회를 이 실패로 사용). 대사(tts) 트랙이 샘플에 없어 Generate 실측엔 영향이 없지만, 시연에서 대사가 나오면 막힌다. 유료 플랜이거나 `V2A_INSPECT_ELEVENLABS_TTS_VOICE_ID`를 계정이 쓸 수 있는 voice로 바꿔야 한다.
+
+**화면(1280x720)**: `docs/mockups/shots/impl-mode-1280-silent.png`, `impl-mode-1280-audio.png`. 상단 바는 한 줄(Open video / 상태 / Generate·Separate / Generate audio), 가로 스크롤 없음. 무음에서는 Separate가 비활성이고 컨트롤 아래에 "No original audio to separate." 문구가 작게 붙어 바 높이가 55px(원음 49px)이다.
+
+**발생한 문제**
+1. TTS 402 (위). 실패 시 0바이트 `tts.wav`가 남는다(`open(out_path, "wb")`가 API 호출 오류보다 먼저 실행됨). 소스는 고치지 않았다.
+2. `model_dump_json`으로 저장한 자산은 계산 필드(`start_frame_index` 등)가 들어 있어 `/api/asset/import`(extra 금지)가 400을 냈다. 측정용으로 해당 키만 제거해 가져왔다.
+3. 설치된 Playwright가 요구하는 chromium(1255)이 캐시에 없어(1248만 있음) `executable_path`로 1248을 썼다.
