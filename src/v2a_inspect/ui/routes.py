@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from v2a_inspect.media_utils import probe_prepared_video
 from v2a_inspect.models import VideoAsset
 from v2a_inspect.preprocessing import prepare_video
+from v2a_inspect.preprocessing.video import extract_original_audio
 
 from .overlays import render_tracking_overlay
 from .pipeline import (
@@ -337,6 +338,9 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             update={
                 "source_path": resolved_video_asset.source_path,
                 "sam3_tracking_path": sam3_tracking_path,
+                "raw_video_path": resolved_video_asset.raw_video_path,
+                "original_audio_path": resolved_video_asset.original_audio_path,
+                "has_audio": resolved_video_asset.has_audio,
             }
         )
         await store.set_complete_asset(imported_asset, stage="imported asset")
@@ -440,9 +444,17 @@ async def _resolve_import_video(upload_path: Path, root_dir: Path) -> VideoAsset
         probe = probe_prepared_video(upload_path)
     except Exception:
         return await asyncio.to_thread(prepare_video, upload_path, root_dir)
+    original_audio_path = await asyncio.to_thread(
+        extract_original_audio,
+        upload_path,
+        root_dir / f"{upload_path.stem}.original.wav",
+    )
     return VideoAsset(
         source_path=probe.path,
         frame_count=probe.frame_count,
+        raw_video_path=upload_path,
+        original_audio_path=original_audio_path,
+        has_audio=original_audio_path is not None,
     )
 
 
@@ -469,14 +481,12 @@ def _summary_payload(snapshot: VideoAssetSnapshot) -> dict[str, object]:
         "audio_tracks": []
         if asset is None
         else [
-            item.model_dump(mode="json")
-            for item in asset.sound_track_audio_artifacts
+            item.model_dump(mode="json") for item in asset.sound_track_audio_artifacts
         ],
         "audio_events": []
         if asset is None
         else [
-            item.model_dump(mode="json")
-            for item in asset.sound_event_audio_artifacts
+            item.model_dump(mode="json") for item in asset.sound_event_audio_artifacts
         ],
     }
 
