@@ -48,8 +48,13 @@ export default function TrackingOverlay({
 
     const rect = canvas.getBoundingClientRect();
     const ratio = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(rect.width * ratio));
-    canvas.height = Math.max(1, Math.round(rect.height * ratio));
+    // Assigning width/height reallocates the backing store, so only do it when the size changes.
+    const pxWidth = Math.max(1, Math.round(rect.width * ratio));
+    const pxHeight = Math.max(1, Math.round(rect.height * ratio));
+    if (canvas.width !== pxWidth || canvas.height !== pxHeight) {
+      canvas.width = pxWidth;
+      canvas.height = pxHeight;
+    }
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, rect.width, rect.height);
 
