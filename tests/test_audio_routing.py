@@ -3,12 +3,23 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from v2a_inspect.audio_generation.client import (
     generate_audio_for_item,
     generate_sfx_elevenlabs,
+    generate_speech_kokoro,
+    generate_v2a_hunyuan,
 )
+
+
+def _failing_async_client(method: str, message: str) -> MagicMock:
+    inner = MagicMock()
+    getattr(inner, method).side_effect = RuntimeError(message)
+    client_cls = MagicMock()
+    client_cls.return_value.__aenter__ = AsyncMock(return_value=inner)
+    client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    return client_cls
 
 
 class AudioRoutingTest(unittest.TestCase):
@@ -111,6 +122,42 @@ class AudioRoutingTest(unittest.TestCase):
                 generate_sfx_elevenlabs("x", str(out), 1.0)
 
             self.assertIn("ELEVENLABS_API_KEY", str(ctx.exception))
+            self.assertFalse(out.exists())
+
+    def test_kokoro_api_failure_propagates(self) -> None:
+        client_cls = _failing_async_client("generate_speech", "kokoro 500")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out = Path(temp_dir) / "x.wav"
+            with patch("v2a_inspect.audio_generation.client.KokoroClient", client_cls):
+                with self.assertRaises(RuntimeError) as ctx:
+                    generate_speech_kokoro("hi", str(out), 1.0)
+
+            self.assertIn("kokoro 500", str(ctx.exception))
+            self.assertFalse(out.exists())
+
+    @patch("v2a_inspect.audio_generation.client.ElevenLabs")
+    @patch("v2a_inspect.audio_generation.client.get_settings")
+    def test_elevenlabs_api_failure_propagates(self, _settings, elevenlabs) -> None:
+        elevenlabs.return_value.text_to_sound_effects.convert.side_effect = (
+            RuntimeError("quota exceeded")
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out = Path(temp_dir) / "x.wav"
+            with self.assertRaises(RuntimeError) as ctx:
+                generate_sfx_elevenlabs("x", str(out), 1.0)
+
+            self.assertIn("quota exceeded", str(ctx.exception))
+            self.assertFalse(out.exists())
+
+    def test_hunyuan_api_failure_propagates(self) -> None:
+        client_cls = _failing_async_client("generate_v2a", "hunyuan 500")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out = Path(temp_dir) / "x.wav"
+            with patch("v2a_inspect.audio_generation.client.HunyuanClient", client_cls):
+                with self.assertRaises(RuntimeError) as ctx:
+                    generate_v2a_hunyuan("vid", 30.0, (0.0, 1.0), "x", str(out), 1.0)
+
+            self.assertIn("hunyuan 500", str(ctx.exception))
             self.assertFalse(out.exists())
 
 
