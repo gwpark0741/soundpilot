@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -26,6 +26,8 @@ from .pipeline import (
     run_audio_generation_pipeline,
     run_event_audio_delete_pipeline,
     run_event_audio_regeneration_pipeline,
+    run_residual_toggle_pipeline,
+    run_track_regeneration_pipeline,
 )
 from .rows import current_frame_rows, timeline_rows, tracking_window_rows
 from .store import VideoAssetSnapshot, VideoAssetStore
@@ -185,6 +187,58 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         await store.publish_asset_mutation(
             snapshot.asset, stage="queued event audio regeneration"
         )
+        return {"status": "queued"}
+
+    @router.post("/api/audio/tracks/{sound_track_id}/regenerate")
+    async def regenerate_audio_track(
+        sound_track_id: str,
+        background_tasks: BackgroundTasks,
+        method: Annotated[Literal["separate", "selsync"], Form()],
+        description: Annotated[str | None, Form()] = None,
+        seed: Annotated[int | None, Form()] = None,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        tracks = asset.sound_timeline.sound_tracks if asset.sound_timeline else []
+        if not any(str(t.sound_track_id) == sound_track_id for t in tracks):
+            raise HTTPException(status_code=404, detail="Sound track not found")
+        if method == "separate" and not asset.has_audio:
+            raise HTTPException(
+                status_code=422,
+                detail="원본 오디오가 없어 분리할 수 없습니다. 생성으로 바꾸세요.",
+            )
+        background_tasks.add_task(
+            run_track_regeneration_pipeline,
+            asset,
+            store,
+            sound_track_id,
+            method,
+            description,
+            seed,
+        )
+        await store.publish_asset_mutation(
+            asset, stage="queued track audio regeneration"
+        )
+        return {"status": "queued"}
+
+    @router.post("/api/audio/residual")
+    async def set_residual_enabled(
+        background_tasks: BackgroundTasks,
+        enabled: Annotated[bool, Form()],
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        if snapshot.asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        background_tasks.add_task(
+            run_residual_toggle_pipeline, snapshot.asset, store, enabled
+        )
+        await store.publish_asset_mutation(snapshot.asset, stage="queued residual update")
         return {"status": "queued"}
 
     @router.get("/api/rows/timeline")

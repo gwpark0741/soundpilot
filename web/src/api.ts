@@ -144,3 +144,39 @@ export async function regenerateEventAudio(
   }
 }
 
+export async function regenerateTrackAudio(
+  trackId: string,
+  method: "separate" | "selsync",
+  description?: string,
+  seed?: number,
+): Promise<void> {
+  const formData = new FormData();
+  formData.append("method", method);
+  if (description) {
+    formData.append("description", description);
+  }
+  if (seed !== undefined) {
+    formData.append("seed", String(seed));
+  }
+  const response = await fetch(`/api/audio/tracks/${trackId}/regenerate`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to regenerate track audio: ${response.status}`);
+  }
+}
+
+export async function setResidualEnabled(enabled: boolean): Promise<void> {
+  const formData = new FormData();
+  formData.append("enabled", String(enabled));
+  const response = await fetch("/api/audio/residual", {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to update residual: ${response.status}`);
+  }
+}

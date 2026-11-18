@@ -1,7 +1,8 @@
 export type RunStatus = "idle" | "running" | "complete" | "failed";
 
 export type SoundTrackType = "speech" | "sfx" | "ambience";
-export type GenerationModel = "t2a" | "v2a" | "tts";
+export type GenerationModel = "t2a" | "v2a" | "tts" | "separate" | "selsync";
+export type TrackStatus = { state: "running" | "done" | "failed"; error?: string | null };
 
 export interface AssetResponse {
   status: RunStatus;
@@ -41,6 +42,13 @@ export interface VideoAsset {
   synthesized_video_path?: string | null;
   sound_event_audio_artifacts?: AudioEventArtifact[];
   sound_track_audio_artifacts?: AudioTrackArtifact[];
+  raw_video_path?: string | null;
+  original_audio_path?: string | null;
+  has_audio?: boolean;
+  separated_stem_paths?: Record<string, string>;
+  track_status?: Record<string, TrackStatus>;
+  residual_path?: string | null;
+  residual_enabled?: boolean;
 }
 
 
@@ -61,6 +69,10 @@ export interface AudioTrackArtifact {
   duration_sec: number;
   event_count: number;
   waveform_peaks: number[];
+  origin?: "mixed" | "separated" | "generated";
+  seed?: number | null;
+  attempt?: number | null;
+  description?: string | null;
 }
 
 export interface VideoSummary {
@@ -160,6 +172,7 @@ export interface SoundTrack {
   canonical_key?: string | null;
   sound_source_id?: string | null;
   generation_model: GenerationModel;
+  description?: string | null;
   notes?: string | null;
 }
 

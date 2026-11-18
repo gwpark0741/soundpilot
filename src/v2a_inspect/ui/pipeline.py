@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import secrets
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -567,6 +568,126 @@ async def run_event_audio_regeneration_pipeline(
             video_asset, audio_plan, event_artifacts, store
         )
         await store.set_complete_asset(video_asset, stage="Regenerated event audio.")
+    except Exception as exc:  # noqa: BLE001 - UI needs stage-specific failure text.
+        await store.set_error(str(exc))
+
+
+async def run_track_regeneration_pipeline(
+    video_asset: VideoAsset,
+    store: VideoAssetStore,
+    sound_track_id: str,
+    method: Literal["separate", "selsync"],
+    description: str | None,
+    seed: int | None,
+) -> None:
+    try:
+        timeline = video_asset.sound_timeline
+        if timeline is None:
+            raise ValueError("No sound timeline found in video asset.")
+        track = next(
+            (t for t in timeline.sound_tracks if str(t.sound_track_id) == sound_track_id),
+            None,
+        )
+        if track is None:
+            raise ValueError("Sound track not found.")
+        track_id = track.sound_track_id
+
+        update: dict[str, object] = {"generation_model": method}
+        if description and description.strip():
+            update["description"] = description.strip()
+        track = track.model_copy(update=update)
+        timeline = timeline.model_copy(
+            update={
+                "sound_tracks": [
+                    track if t.sound_track_id == track_id else t
+                    for t in timeline.sound_tracks
+                ]
+            }
+        )
+        video_asset = video_asset.model_copy(update={"sound_timeline": timeline})
+
+        previous = next(
+            (
+                a
+                for a in video_asset.sound_track_audio_artifacts
+                if a.sound_track_id == track_id and a.origin != "mixed"
+            ),
+            None,
+        )
+        events = [e for e in timeline.sound_events if e.sound_track_id == track_id]
+        track_dir = _audio_work_root(video_asset) / "audio" / "tracks"
+        track_dir.mkdir(parents=True, exist_ok=True)
+
+        await store.set_running(stage="regenerating track")
+        video_asset = await _set_track_status(
+            video_asset, store, track_id, TrackStatus(state="running")
+        )
+        try:
+            artifact = await _generate_track_stem(
+                video_asset,
+                track,
+                method=method,
+                description=track_description(track, events),
+                seed=secrets.randbelow(2**31) if seed is None else seed,
+                attempt=((previous.attempt if previous else None) or 0) + 1,
+                out_dir=track_dir,
+            )
+        except Exception as exc:  # noqa: BLE001 - keep previous stem, surface error.
+            await _set_track_status(
+                video_asset, store, track_id, TrackStatus(state="failed", error=str(exc))
+            )
+            await store.set_error(f"{track.label}: {exc}")
+            return
+
+        separated = {
+            k: v for k, v in video_asset.separated_stem_paths.items() if k != track_id
+        }
+        if method == "separate":
+            separated[track_id] = artifact.path
+        video_asset = video_asset.model_copy(update={"separated_stem_paths": separated})
+        video_asset = await _refresh_residual(video_asset)
+        video_asset = await _set_track_status(
+            video_asset, store, track_id, TrackStatus(state="done")
+        )
+
+        stems = [
+            a
+            for a in video_asset.sound_track_audio_artifacts
+            if a.origin != "mixed" and a.sound_track_id != track_id
+        ] + [artifact]
+        audio_plan = build_audio_plan(
+            timeline, fps=video_asset.fps, total_duration=video_asset.duration_sec
+        )
+        video_asset = await _rebuild_audio_outputs(
+            video_asset,
+            audio_plan,
+            video_asset.sound_event_audio_artifacts,
+            store,
+            stems,
+        )
+        await store.set_complete_asset(video_asset, stage="Regenerated track audio.")
+    except Exception as exc:  # noqa: BLE001 - UI needs stage-specific failure text.
+        await store.set_error(str(exc))
+
+
+async def run_residual_toggle_pipeline(
+    video_asset: VideoAsset,
+    store: VideoAssetStore,
+    enabled: bool,
+) -> None:
+    try:
+        timeline = video_asset.sound_timeline
+        if timeline is None:
+            raise ValueError("No sound timeline found in video asset.")
+        video_asset = video_asset.model_copy(update={"residual_enabled": enabled})
+        await store.set_running(stage="mixing audio")
+        audio_plan = build_audio_plan(
+            timeline, fps=video_asset.fps, total_duration=video_asset.duration_sec
+        )
+        video_asset = await _rebuild_audio_outputs(
+            video_asset, audio_plan, video_asset.sound_event_audio_artifacts, store
+        )
+        await store.set_complete_asset(video_asset, stage="Updated residual.")
     except Exception as exc:  # noqa: BLE001 - UI needs stage-specific failure text.
         await store.set_error(str(exc))
 
