@@ -14,11 +14,19 @@ test("regenerateBlockedReason blocks unsaved edits and running jobs", async (con
   );
   assert.equal(
     regenerateBlockedReason(true, "complete"),
-    "Save Changes first. Regenerating now would discard your other unsaved edits.",
+    "Unsaved timeline edits. Generate audio to apply them or discard.",
   );
   assert.equal(
     regenerateBlockedReason(false, "running"),
-    "Wait for the current run to finish.",
+    "Generation is running. Actions are unavailable until it finishes.",
+  );
+  assert.equal(
+    regenerateBlockedReason(false, "running", "Generating audio 2/4"),
+    "Generating 2 of 4. Actions are unavailable until it finishes.",
+  );
+  assert.equal(
+    regenerateBlockedReason(false, "running", "track 3 of 5"),
+    "Generating 3 of 5. Actions are unavailable until it finishes.",
   );
   assert.equal(regenerateBlockedReason(false, "complete"), null);
 });

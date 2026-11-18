@@ -8,6 +8,8 @@ import {
   generateAudio,
   deleteEventAudio,
   regenerateEventAudio,
+  regenerateTrackAudio,
+  setResidualEnabled,
 } from "./api";
 import type { VideoAsset } from "./types";
 import VideoEditor from "./components/VideoEditor";
@@ -127,6 +129,32 @@ export default function App() {
     }
   }
 
+  async function handleRegenerateTrack(
+    trackId: string,
+    method: "separate" | "selsync",
+    description: string | null,
+  ) {
+    setSubmitError(null);
+    try {
+      await regenerateTrackAudio(trackId, method, description ?? undefined);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  async function handleSetResidual(enabled: boolean) {
+    setSubmitError(null);
+    try {
+      await setResidualEnabled(enabled);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
   return (
     <VideoEditor
       state={state}
@@ -138,6 +166,8 @@ export default function App() {
       onGenerateAudio={handleGenerateAudio}
       onDeleteEventAudio={handleDeleteEventAudio}
       onRegenerateEventAudio={handleRegenerateEventAudio}
+      onRegenerateTrack={handleRegenerateTrack}
+      onSetResidual={handleSetResidual}
     />
   );
 }

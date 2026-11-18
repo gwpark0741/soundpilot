@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Inspector from "./Inspector";
 import Timeline, { type CreateSoundTrackInput } from "./Timeline";
+import SelectedTrackPanel from "./SelectedTrackPanel";
 import Stage from "./Stage";
 import { fetchAssetForExport, fetchTrackingWindow } from "../api";
 import { highlightFor, objectColor } from "../lib/selection";
@@ -31,14 +32,27 @@ interface VideoEditorProps {
     spokenText: string | null,
     serverUrl: string | null,
   ) => Promise<void> | void;
+  onRegenerateTrack?: (
+    trackId: string,
+    method: "separate" | "selsync",
+    description: string | null,
+  ) => Promise<void> | void;
+  onSetResidual?: (enabled: boolean) => Promise<void> | void;
 }
 
-export function regenerateBlockedReason(hasTimelineEdits: boolean, status: string): string | null {
+export function regenerateBlockedReason(
+  hasTimelineEdits: boolean,
+  status: string,
+  stage?: string | null,
+): string | null {
   if (hasTimelineEdits) {
-    return "Save Changes first. Regenerating now would discard your other unsaved edits.";
+    return "Unsaved timeline edits. Generate audio to apply them or discard.";
   }
   if (status === "running") {
-    return "Wait for the current run to finish.";
+    const progress = stage?.match(/(\d+)\s*(?:\/|of)\s*(\d+)/);
+    return progress
+      ? `Generating ${progress[1]} of ${progress[2]}. Actions are unavailable until it finishes.`
+      : "Generation is running. Actions are unavailable until it finishes.";
   }
   return null;
 }
@@ -53,6 +67,8 @@ export default function VideoEditor({
   onGenerateAudio,
   onDeleteEventAudio,
   onRegenerateEventAudio,
+  onRegenerateTrack,
+  onSetResidual,
 }: VideoEditorProps) {
   const [frame, setFrame] = useState(0);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
@@ -399,7 +415,7 @@ export default function VideoEditor({
     soundEventId: string,
     isSpeech: boolean,
   ) {
-    if (!onRegenerateEventAudio || regenerateBlockedReason(hasTimelineEdits, state.status)) {
+    if (!onRegenerateEventAudio || regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)) {
       return;
     }
     const fd = new FormData(form);
@@ -416,6 +432,25 @@ export default function VideoEditor({
         spokenText || null,
         serverUrl,
       );
+    } catch (error) {
+      setExportStatus(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    submitEditSoundEventDetails(soundEventId, description, spokenText);
+    setHasTimelineEdits(false);
+    setExportStatus("Queued event audio regeneration.");
+  }
+
+  async function regenerateEventFromPanel(
+    soundEventId: string,
+    description: string,
+    spokenText: string | null,
+  ) {
+    if (!onRegenerateEventAudio || regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)) {
+      return;
+    }
+    try {
+      await onRegenerateEventAudio(soundEventId, description, spokenText, null);
     } catch (error) {
       setExportStatus(error instanceof Error ? error.message : String(error));
       return;
@@ -1110,6 +1145,30 @@ export default function VideoEditor({
                 </section>
               ) : null}
             </div>
+            {selectedTrack ? (
+              <SelectedTrackPanel
+                key={selectedTrack.sound_track_id}
+                track={selectedTrack}
+                artifact={audioTrackArtifacts.find((a) => a.sound_track_id === selectedTrack.sound_track_id)}
+                status={baseAsset?.track_status?.[selectedTrack.sound_track_id]}
+                appRunning={state.status === "running"}
+                blockedReason={regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)}
+                hasAudio={baseAsset?.has_audio ?? false}
+                residualEnabled={baseAsset?.residual_enabled ?? false}
+                objectColor={highlightColor}
+                onRegenerate={(method, description) =>
+                  // App already reports the failure via submitError.
+                  void Promise.resolve(onRegenerateTrack?.(selectedTrack.sound_track_id, method, description)).catch(() => {})
+                }
+                onSetResidual={(enabled) => void Promise.resolve(onSetResidual?.(enabled)).catch(() => {})}
+                events={(draftAsset?.sound_timeline?.sound_events ?? []).filter(
+                  (event) => event.sound_track_id === selectedTrack.sound_track_id,
+                )}
+                onRegenerateEvent={(id, description, spokenText) =>
+                  void regenerateEventFromPanel(id, description, spokenText)
+                }
+              />
+            ) : null}
             <Inspector
               asset={draftAsset ?? baseAsset}
               video={video}
@@ -1152,7 +1211,7 @@ export default function VideoEditor({
             (item) => item.sound_track_id === row.sound_track_id,
           );
           const isSpeech = soundTrack?.track_type === "speech";
-          const regenerateReason = regenerateBlockedReason(hasTimelineEdits, state.status);
+          const regenerateReason = regenerateBlockedReason(hasTimelineEdits, state.status, state.stage);
           const eventAudio = audioEventArtifacts.find((item) => item.sound_event_id === editingEventId);
           return (
             <div className="event-dialog-backdrop">
