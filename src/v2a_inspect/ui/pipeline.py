@@ -26,6 +26,7 @@ from v2a_inspect.models import (
 )
 from v2a_inspect.audio_generation.client import generate_audio_for_item
 from v2a_inspect.audio_generation.plan import build_audio_plan
+from v2a_inspect.audio_generation.routing import apply_default_routing
 from v2a_inspect.audio_generation.mix import (
     mix_audio_into_video,
     mix_audio_items_to_wav,
@@ -111,6 +112,7 @@ async def run_uploaded_video_pipeline(
             max_workers=settings.agent_sound_timeline_max_workers,
             on_change=on_sound_change,
         )
+        video_asset = _apply_track_routing(video_asset)
         await store.publish_asset_mutation(video_asset, stage="built sound timeline")
 
         await store.set_complete()
@@ -135,10 +137,20 @@ async def run_sound_timeline_pipeline(
             max_workers=settings.agent_sound_timeline_max_workers,
             on_change=on_sound_change,
         )
+        video_asset = _apply_track_routing(video_asset)
         await store.publish_asset_mutation(video_asset, stage="built sound timeline")
         await store.set_complete()
     except Exception as exc:  # noqa: BLE001 - UI needs stage-specific failure text.
         await store.set_error(str(exc))
+
+
+def _apply_track_routing(video_asset: VideoAsset) -> VideoAsset:
+    if video_asset.sound_timeline is None:
+        return video_asset
+    routed = apply_default_routing(
+        video_asset.sound_timeline, has_audio=video_asset.has_audio
+    )
+    return video_asset.model_copy(update={"sound_timeline": routed})
 
 
 async def _extract_keyframes_incrementally(
