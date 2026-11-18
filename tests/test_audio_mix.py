@@ -5,6 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+from scipy.io import wavfile
+
 from v2a_inspect.audio_generation import mix as mix_module
 from v2a_inspect.models.audio_plan import AudioPlan, AudioPlanItem
 
@@ -74,6 +77,31 @@ class AudioMixTest(unittest.TestCase):
                 video.write_args[1]["temp_audiofile_path"],
                 str(output_path.parent),
             )
+
+    def _stem_active_seconds(self, model: str) -> float:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            t = np.arange(44100) / 44100
+            clip = (np.sin(2 * np.pi * 440 * t) * 0.5 * 32767).astype(np.int16)
+            wavfile.write(root / "clip.wav", 44100, clip)  # 1.0 s
+            item = AudioPlanItem(
+                item_id="e",
+                type="sfx",
+                time=(0.0, 0.1),  # 0.1 s event window
+                description="x",
+                volume=1.0,
+                generation_model=model,
+            )
+            out = mix_module.mix_audio_items_to_wav(
+                [item], {"e": str(root / "clip.wav")}, str(root / "stem.wav"), total_duration=2.0
+            )
+            rate, data = wavfile.read(out)
+            return float((np.abs(data.astype(float)).max(axis=-1) > 100).sum() / rate)
+
+    def test_tts_and_t2a_clips_keep_full_length_others_are_trimmed(self) -> None:
+        self.assertGreater(self._stem_active_seconds("t2a"), 0.9)
+        self.assertGreater(self._stem_active_seconds("tts"), 0.9)
+        self.assertLess(self._stem_active_seconds("selsync"), 0.2)
 
 
 if __name__ == "__main__":

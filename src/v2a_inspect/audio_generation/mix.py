@@ -78,7 +78,10 @@ def mix_audio_into_video(
             duration = item.time[1] - item.time[0]
             clip = AudioFileClip(wav_path)
             clip_dur = clip.duration or duration
-            target_duration = max(0.01, min(clip_dur, duration))
+            # TTS/T2A clips keep their natural length (ElevenLabs does not stretch to
+            # the event window); total_duration still bounds the stem.
+            keep_full = item.generation_model in ("tts", "t2a")
+            target_duration = max(0.01, clip_dur if keep_full else min(clip_dur, duration))
             clip = clip.subclipped(0, target_duration).with_duration(target_duration)
             clip = clip.with_start(item.time[0])
 
@@ -167,7 +170,10 @@ def mix_audio_items_to_wav(
             duration = item.time[1] - item.time[0]
             clip = AudioFileClip(wav_path)
             clip_dur = clip.duration or duration
-            target_duration = max(0.01, min(clip_dur, duration))
+            # TTS/T2A clips keep their natural length (ElevenLabs does not stretch to
+            # the event window); total_duration still bounds the stem.
+            keep_full = item.generation_model in ("tts", "t2a")
+            target_duration = max(0.01, clip_dur if keep_full else min(clip_dur, duration))
             clip = clip.subclipped(0, target_duration).with_duration(target_duration)
             clip = clip.with_start(item.time[0])
 
