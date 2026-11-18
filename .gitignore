@@ -261,6 +261,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.demo
 !.env.example
 .env.secure
 credentials.yaml
