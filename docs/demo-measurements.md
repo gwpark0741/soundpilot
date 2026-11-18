@@ -145,3 +145,31 @@ ElevenLabs 결과 이벤트 WAV 4개는 모두 RIFF/PCM 16bit 44.1 kHz 스테레
 1. TTS 402 (위). 실패 시 0바이트 `tts.wav`가 남는다(`open(out_path, "wb")`가 API 호출 오류보다 먼저 실행됨). 소스는 고치지 않았다.
 2. `model_dump_json`으로 저장한 자산은 계산 필드(`start_frame_index` 등)가 들어 있어 `/api/asset/import`(extra 금지)가 400을 냈다. 측정용으로 해당 키만 제거해 가져왔다.
 3. 설치된 Playwright가 요구하는 chromium(1255)이 캐시에 없어(1248만 있음) `executable_path`로 1248을 썼다.
+
+## Compose (3 containers, GPU 7)
+
+측정일 2026-11-19. `compose.demo.yaml`, 물리 GPU 7 한 장(A100-SXM4-80GB, 시작 전 비어 있음), 가중치 `/home/common/huggingface` 읽기 전용 마운트(`HF_HUB_OFFLINE=1`). Gemini 분석과 ElevenLabs는 실제 호출.
+
+| 항목 | 값 |
+|---|---|
+| 이미지 | `v2a-inspect:demo` `6e9ebf26c796`, `v2a-inspect-server:demo` `7cccf9e9eac9`, `audyssey-tools:demo-1117` `cc603e8ffc46` |
+| `up -d` 후 세 컨테이너 healthy | 32 s (2회 모두). tools `/health`는 모델 적재 전에 통과하므로 첫 호출에서 로딩이 일어난다 |
+| 최대 GPU 7 메모리 (1초 샘플, 전 구간) | 49,609 MiB (한도 70 GB 이내) |
+| 컨테이너별 (모두 적재 후) | inference 28,728 MiB, tools 20,866 MiB, ui 0 |
+| preflight | 11개 검사 모두 OK (`work/p3/preflight.out`) |
+
+Warmup 단계별 시간 (`scripts/demo_preflight.py`, 콜드 = `down` 후 첫 실행, 영상별 1회):
+
+| 영상 | analysis (업로드, SAM3 tracking, 분석) | Generate | Separate | 해당 영상 최대 GPU |
+|---|---|---|---|---|
+| `samples/sample.mp4` (7.1 s, 오디오 있음) | 101 s | 15 s | 65 s | 46,449 MiB |
+| `work/task11/sample_silent.mp4` (무음) | 99 s | 48 s | 건너뜀 (원음 없음) | 49,609 MiB |
+
+Warm 2회차는 측정하지 않았다.
+
+Bundle 확인 (UI HTTP): `GET /api/bundle` 200 (131 MB; work root 전체가 들어가 이전 실행의 업로드도 포함) -> `down` -> `up -d` -> `POST /api/bundle/import` 200 -> 트랙 4개 `GET /api/audio/tracks/{id}` 모두 200 `audio/wav` -> 한 트랙 `regenerate method=generate` 완료(약 4 s), 이후 트랙 4개 모두 다시 200. 가져온 자산이 무음 영상이어서 separated stem 재생은 이 확인에 포함되지 않았다.
+
+발생한 문제와 조치 (이미지 재빌드 없이 compose와 preflight만 수정):
+1. 이미지가 `V2A_INSPECT_VIDEO_ENCODE_USE_NVENC=true`를 고정하는데 A100에는 NVENC가 없어 영상 정규화가 실패했다. `compose.demo.yaml`의 ui에서 `false`로 덮어썼다.
+2. 서버 이미지가 `/data/uploads`를 root 소유로 만들어 업로드가 500(Permission denied)이었다. 볼륨을 `/data`에 마운트하도록 바꿨다.
+3. ElevenLabs 키가 `user_read` 권한이 없는 제한 키라 preflight 조회가 401(`missing_permissions`)이었다. 이 경우를 인증 성공으로 처리하도록 preflight를 고쳤다.
