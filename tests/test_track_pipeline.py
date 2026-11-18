@@ -231,6 +231,76 @@ class TrackPipelineTest(unittest.TestCase):
 
             self.assertIn("residual", mix.call_args.kwargs["generated_audio"])
 
+    def test_eventless_selsync_track_generates_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            track = SoundTrack(
+                track_type="sfx", label="Wind", generation_model="selsync"
+            )
+            asset = VideoAsset(
+                source_path=root / "video.mp4",
+                frame_count=30,
+                sound_timeline=SoundTimeline(sound_tracks=[track], sound_events=[]),
+            )
+            with (
+                patch(
+                    "v2a_inspect.ui.pipeline.generate_track", side_effect=_fake_stem
+                ) as gen,
+                patch(
+                    "v2a_inspect.ui.pipeline.mix_audio_into_video",
+                    side_effect=_fake_mix,
+                ),
+            ):
+                snapshot = asyncio.run(_run(asset))
+
+            self.assertEqual(snapshot.status, "complete")
+            self.assertEqual(gen.call_args.args[1]["spans"], [])
+            self.assertEqual(len(snapshot.asset.sound_track_audio_artifacts), 1)
+            self.assertEqual(
+                snapshot.asset.track_status[track.sound_track_id].state, "done"
+            )
+
+    def test_failed_track_keeps_previous_stem_and_separated_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, tracks = _asset(root, "selsync", ["Door"])
+            tid = tracks[0].sound_track_id
+            old = SoundTrackAudioArtifact(
+                sound_track_id=tid,
+                track_label="Door",
+                track_type="sfx",
+                path=_write_sine(root / "old_stem.wav"),
+                duration_sec=1.0,
+                event_count=1,
+                origin="separated",
+                attempt=1,
+            )
+            asset = asset.model_copy(
+                update={
+                    "sound_track_audio_artifacts": [old],
+                    "separated_stem_paths": {tid: old.path},
+                }
+            )
+            with (
+                patch(
+                    "v2a_inspect.ui.pipeline.generate_track",
+                    side_effect=RuntimeError("Audyssey /generate failed (500): boom"),
+                ),
+                patch(
+                    "v2a_inspect.ui.pipeline.mix_audio_into_video",
+                    side_effect=_fake_mix,
+                ) as mix,
+            ):
+                snapshot = asyncio.run(_run(asset))
+
+            self.assertEqual(snapshot.status, "complete")
+            self.assertEqual(snapshot.asset.track_status[tid].state, "failed")
+            self.assertEqual(snapshot.asset.sound_track_audio_artifacts, [old])
+            self.assertEqual(snapshot.asset.separated_stem_paths, {tid: old.path})
+            self.assertEqual(
+                mix.call_args.kwargs["generated_audio"], {str(tid): str(old.path)}
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -284,16 +284,22 @@ async def run_audio_generation_pipeline(
         timeline = video_asset.sound_timeline
         if not timeline:
             raise ValueError("No sound timeline found in video asset.")
-        if not timeline.sound_events:
+        if not timeline.sound_events and not any(
+            t.generation_model in _TRACK_LEVEL_MODELS for t in timeline.sound_tracks
+        ):
             raise ValueError("No audio items to generate.")
 
+        previous_stems = {
+            a.sound_track_id: a
+            for a in video_asset.sound_track_audio_artifacts
+            if a.origin != "mixed"
+        }
         await store.set_running(stage="preparing audio plan")
         video_asset = video_asset.model_copy(
             update={
                 "synthesized_video_path": None,
                 "sound_event_audio_artifacts": [],
                 "sound_track_audio_artifacts": [],
-                "separated_stem_paths": {},
                 "track_status": {},
             }
         )
@@ -341,8 +347,6 @@ async def run_audio_generation_pipeline(
                 continue
             track_id = track.sound_track_id
             events = [e for e in timeline.sound_events if e.sound_track_id == track_id]
-            if not events:
-                continue
             video_asset = await _set_track_status(
                 video_asset, store, track_id, TrackStatus(state="running")
             )
@@ -359,6 +363,8 @@ async def run_audio_generation_pipeline(
             except Exception as exc:  # noqa: BLE001 - collect per-track failures.
                 errors.append(f"{track.label}: {exc}")
                 status = TrackStatus(state="failed", error=str(exc))
+                if track_id in previous_stems:
+                    track_artifacts.append(previous_stems[track_id])
             else:
                 track_artifacts.append(artifact)
                 if method == "separate":
