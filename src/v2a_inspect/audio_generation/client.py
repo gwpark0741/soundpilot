@@ -1,7 +1,7 @@
 """
 오디오 생성 클라이언트.
 
-- Kokoro: Speech 오디오 생성
+- ElevenLabs / Kokoro: Speech 오디오 생성 (V2A_INSPECT_TTS_PROVIDER)
 - HunyuanVideo-Foley: 영상 동기화가 필요한 V2A 생성
 - ElevenLabs: SFX / Ambience T2A 생성
 
@@ -42,6 +42,35 @@ def generate_speech_kokoro(
             )
 
     shutil.copy(asyncio.run(_generate()), out_path)
+    return out_path
+
+
+# ── ElevenLabs TTS ────────────────────────────────────────────────────────────
+
+
+def generate_speech_elevenlabs(
+    text: str, out_path: str, duration: float | None = None
+) -> str:
+    """Generate speech using ElevenLabs API. duration is unused (no stretching)."""
+    settings = get_settings()
+    api_key = settings.elevenlabs_api_key
+    if api_key is None:
+        raise RuntimeError(
+            "ELEVENLABS_API_KEY is not set. Add it to .env or set "
+            "V2A_INSPECT_TTS_PROVIDER=kokoro."
+        )
+
+    client = ElevenLabs(api_key=api_key.get_secret_value())
+    audio_generator = client.text_to_speech.convert(
+        settings.elevenlabs_tts_voice_id,
+        text=text,
+        model_id=settings.elevenlabs_tts_model,
+        output_format="wav_48000",
+    )
+
+    with open(out_path, "wb") as f:
+        for chunk in audio_generator:
+            f.write(chunk)
     return out_path
 
 
@@ -139,6 +168,8 @@ def generate_audio_for_item(
         text = (spoken_text or description).strip()
         if not text:
             raise ValueError("TTS generation requires spoken_text")
+        if get_settings().tts_provider == "elevenlabs":
+            return generate_speech_elevenlabs(text, out_path, duration)
         return generate_speech_kokoro(text, out_path, duration, server_url)
 
     if generation_model == "v2a":

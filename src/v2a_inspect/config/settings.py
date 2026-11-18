@@ -183,6 +183,18 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("ELEVENLABS_API_KEY"),
     )
+    tts_provider: Literal["elevenlabs", "kokoro"] = Field(
+        default="elevenlabs",
+        validation_alias=AliasChoices("V2A_INSPECT_TTS_PROVIDER"),
+    )
+    elevenlabs_tts_voice_id: str = Field(
+        default="21m00Tcm4TlvDq8ikWAM",
+        validation_alias=AliasChoices("V2A_INSPECT_ELEVENLABS_TTS_VOICE_ID"),
+    )
+    elevenlabs_tts_model: str = Field(
+        default="eleven_multilingual_v2",
+        validation_alias=AliasChoices("V2A_INSPECT_ELEVENLABS_TTS_MODEL"),
+    )
     audyssey_tools_url: str = Field(
         default="http://127.0.0.1:8700",
         validation_alias=AliasChoices("V2A_INSPECT_AUDYSSEY_TOOLS_URL"),
