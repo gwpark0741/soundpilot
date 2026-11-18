@@ -12,6 +12,11 @@ interface SelectedTrackPanelProps {
   hasAudio: boolean;
   residualEnabled: boolean;
   objectColor: string;
+  // Failure of the last action started from this panel, shown next to the controls.
+  error?: string | null;
+  // Unsaved timeline edits can be dropped from here, since they are what blocks Regenerate.
+  hasUnsavedEdits?: boolean;
+  onDiscardEdits?: () => void;
   onRegenerate: (method: "separate" | "selsync", description: string | null) => void;
   onSetResidual: (enabled: boolean) => void;
   events: SoundEvent[];
@@ -75,6 +80,9 @@ export default function SelectedTrackPanel({
   hasAudio,
   residualEnabled,
   objectColor,
+  error = null,
+  hasUnsavedEdits = false,
+  onDiscardEdits,
   onRegenerate,
   onSetResidual,
   events,
@@ -160,11 +168,24 @@ export default function SelectedTrackPanel({
             </div>
           </>
         )}
+        {error ? (
+          <div className="err" role="alert">
+            <Icon name="x" />
+            <div>{error}</div>
+          </div>
+        ) : null}
         {blocked ? (
           <p className="reason" id={whyId}>
             <Icon name="info" />
             {blockedReason}
           </p>
+        ) : null}
+        {blocked && hasUnsavedEdits && onDiscardEdits ? (
+          <div className="actions">
+            <button type="button" className="btn sm" onClick={onDiscardEdits}>
+              Discard edits
+            </button>
+          </div>
         ) : null}
       </article>
       {hasAudio ? (

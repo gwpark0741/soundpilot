@@ -115,8 +115,9 @@ export default function App() {
       await regenerateEventAudio(soundEventId, description, spokenText, serverUrl);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(failure("Could not regenerate the event audio.", error, "Press Regenerate to try again."));
-      throw error;
+      // Top line: short summary. The full message goes next to the failed control.
+      setSubmitError("Could not regenerate the event audio.");
+      throw new Error(failure("Could not regenerate the event audio.", error, "Press Regenerate to try again."));
     }
   }
 
@@ -130,8 +131,9 @@ export default function App() {
       await regenerateTrackAudio(trackId, method, description ?? undefined);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(failure("Could not regenerate the track.", error, "Press Regenerate to try again."));
-      throw error;
+      // Top line: short summary. The full message goes next to the failed control.
+      setSubmitError("Could not regenerate the track.");
+      throw new Error(failure("Could not regenerate the track.", error, "Press Regenerate to try again."));
     }
   }
 
@@ -141,8 +143,9 @@ export default function App() {
       await setResidualEnabled(enabled);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(failure("Could not update the soundtrack mix.", error, "Try the switch again."));
-      throw error;
+      // Top line: short summary. The full message goes next to the failed control.
+      setSubmitError("Could not update the soundtrack mix.");
+      throw new Error(failure("Could not update the soundtrack mix.", error, "Try the switch again."));
     }
   }
 

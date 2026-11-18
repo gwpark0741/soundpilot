@@ -8,7 +8,6 @@ import { fetchAssetForExport, fetchTrackingWindow } from "../api";
 import { highlightFor, objectColor, transportAction } from "../lib/selection";
 import type {
   AssetResponse,
-  AudioEventArtifact,
   AudioTrackArtifact,
   SoundEvent,
   TimelineRow,
@@ -72,6 +71,7 @@ export default function VideoEditor({
   const [soloTrackId, setSoloTrackId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [serverUrl, setServerUrl] = useState("");
+  const [panelError, setPanelError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [trackWindow, setTrackWindow] = useState<TrackWindowResponse | null>(null);
   const [timelineRows, setTimelineRows] = useState<TimelineRow[]>(state.timeline_rows);
@@ -130,10 +130,6 @@ export default function VideoEditor({
         : (baseAsset?.sound_track_audio_artifacts ?? state.audio_tracks ?? []),
     [baseAsset, hasTimelineEdits, state.audio_tracks],
   );
-  const audioEventArtifacts = useMemo<AudioEventArtifact[]>(
-    () => baseAsset?.sound_event_audio_artifacts ?? state.audio_events ?? [],
-    [baseAsset, state.audio_events],
-  );
   const selectFrame = useCallback(
     (nextFrame: number) => {
       stopPreviewAudio(true);
@@ -187,16 +183,17 @@ export default function VideoEditor({
       audio.pause();
     }
     audioCacheRef.current.clear();
-    for (const artifact of audioEventArtifacts) {
-      preloadAudio(eventAudioUrl(artifact.sound_event_id));
-    }
-  }, [audioEventArtifacts, state.asset_version]);
+  }, [state.asset_version]);
 
   useEffect(() => {
     if (frame !== selectedFrame) {
       setFrame(selectedFrame);
     }
   }, [frame, selectedFrame]);
+
+  useEffect(() => {
+    setPanelError(null);
+  }, [selectedTrackId]);
 
   useEffect(() => {
     if (selectedTrackId === null && soundTracks.length > 0) {
@@ -281,10 +278,6 @@ export default function VideoEditor({
     audioPreviewMutedRestoreRef.current = null;
   }
 
-  function eventAudioUrl(soundEventId: string): string {
-    return `/api/audio/events/${soundEventId}?asset_version=${state.asset_version}`;
-  }
-
   function trackAudioUrl(soundTrackId: string): string {
     return `/api/audio/tracks/${soundTrackId}?asset_version=${state.asset_version}`;
   }
@@ -355,6 +348,14 @@ export default function VideoEditor({
     playSyncedAudio(trackAudioUrl(soundTrackId), startFrame / fps, startFrame);
   }
 
+  // Panel actions report a failure next to the control; App already put a summary in the top line.
+  function runPanelAction(action: () => Promise<void> | void) {
+    setPanelError(null);
+    void Promise.resolve()
+      .then(action)
+      .catch((error) => setPanelError(error instanceof Error ? error.message : String(error)));
+  }
+
   async function regenerateEventFromPanel(
     soundEventId: string,
     description: string,
@@ -363,10 +364,11 @@ export default function VideoEditor({
     if (!onRegenerateEventAudio || regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)) {
       return;
     }
+    setPanelError(null);
     try {
       await onRegenerateEventAudio(soundEventId, description, spokenText, null);
-    } catch {
-      // App reports the failure through submitError.
+    } catch (error) {
+      setPanelError(error instanceof Error ? error.message : String(error));
       return;
     }
     submitEditSoundEventDetails(soundEventId, description, spokenText);
@@ -591,11 +593,13 @@ export default function VideoEditor({
             hasAudio={baseAsset?.has_audio ?? false}
             residualEnabled={baseAsset?.residual_enabled ?? false}
             objectColor={highlightColor}
+            error={panelError}
+            hasUnsavedEdits={hasTimelineEdits}
+            onDiscardEdits={resetTimestampEdits}
             onRegenerate={(method, description) =>
-              // App already reports the failure via submitError.
-              void Promise.resolve(onRegenerateTrack?.(selectedTrack.sound_track_id, method, description)).catch(() => {})
+              runPanelAction(() => onRegenerateTrack?.(selectedTrack.sound_track_id, method, description))
             }
-            onSetResidual={(enabled) => void Promise.resolve(onSetResidual?.(enabled)).catch(() => {})}
+            onSetResidual={(enabled) => runPanelAction(() => onSetResidual?.(enabled))}
             events={(draftAsset?.sound_timeline?.sound_events ?? []).filter(
               (event) => event.sound_track_id === selectedTrack.sound_track_id,
             )}

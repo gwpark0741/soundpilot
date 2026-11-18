@@ -89,4 +89,21 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   assert.match(m, /Hi there/);
   assert.match(m, />Regenerate</);
   assert.doesNotMatch(m, /Re-separate/);
+
+  // unsaved edits block Regenerate: Discard edits is offered next to the reason, not primary
+  const edits = "Unsaved timeline edits. Generate audio to apply them or discard.";
+  m = html({ blockedReason: edits, hasUnsavedEdits: true, onDiscardEdits() {} });
+  assert.match(m, />Discard edits</);
+  assert.doesNotMatch(m, /btn primary/);
+  // not when the block is a running generation, or when there is nothing to discard
+  m = html({ blockedReason: "Generating 2 of 4. Actions are unavailable until it finishes.", appRunning: true, hasUnsavedEdits: false, onDiscardEdits() {} });
+  assert.doesNotMatch(m, /Discard edits/);
+  m = html({});
+  assert.doesNotMatch(m, /Discard edits/);
+
+  // a failed action shows its message in .err under the actions
+  m = html({ error: "Could not regenerate the track. Pipeline is running. Press Regenerate to try again." });
+  assert.match(m, /<div class="err" role="alert">.*Pipeline is running\./);
+  assert.ok(m.indexOf('class="actions"') < m.indexOf('role="alert"'));
+  assert.doesNotMatch(html({}), /role="alert"/);
 });
