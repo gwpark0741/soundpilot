@@ -37,7 +37,7 @@ from v2a_inspect.audio_generation.audyssey import (
 from v2a_inspect.audio_generation.client import generate_audio_for_item
 from v2a_inspect.audio_generation.plan import build_audio_plan
 from v2a_inspect.audio_generation.residual import compute_residual
-from v2a_inspect.audio_generation.routing import apply_default_routing
+from v2a_inspect.audio_generation.routing import route_tracks
 from v2a_inspect.audio_generation.mix import (
     mix_audio_into_video,
     mix_audio_items_to_wav,
@@ -158,8 +158,10 @@ async def run_sound_timeline_pipeline(
 def _apply_track_routing(video_asset: VideoAsset) -> VideoAsset:
     if video_asset.sound_timeline is None:
         return video_asset
-    routed = apply_default_routing(
-        video_asset.sound_timeline, has_audio=video_asset.has_audio
+    routed = route_tracks(
+        video_asset.sound_timeline,
+        mode=video_asset.audio_mode,
+        has_audio=video_asset.has_audio,
     )
     return video_asset.model_copy(update={"sound_timeline": routed})
 
