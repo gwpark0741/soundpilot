@@ -70,6 +70,16 @@ class AudysseyClientTest(unittest.TestCase):
             [{"start": 0.0, "end": 0.5}, {"start": 1.0, "end": 2.0}],
         )
 
+    def test_source_plan_drops_zero_length_spans(self, _settings_mock) -> None:
+        track = _track()
+        plan = source_plan(
+            track,
+            [_event(track, 10, 10), _event(track, 0, 30)],
+            fps=30,
+            description="d",
+        )
+        self.assertEqual(plan["spans"], [{"start": 0.0, "end": 1.0}])
+
     def test_source_plan_without_events(self, _settings_mock) -> None:
         plan = source_plan(_track(), [], fps=30, description="d")
         self.assertEqual(plan["kind"], "sfx")

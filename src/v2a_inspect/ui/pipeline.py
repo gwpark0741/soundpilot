@@ -381,6 +381,7 @@ async def run_audio_generation_pipeline(
                 status = TrackStatus(state="done")
             video_asset = await _set_track_status(video_asset, store, track_id, status)
 
+        event_track_failures: dict[UUID, str] = {}
         for i, item in enumerate(event_items, 1):
             context = item_context.get(item.item_id)
             if context is None:
@@ -407,6 +408,7 @@ async def run_audio_generation_pipeline(
                 )
             except Exception as exc:  # noqa: BLE001 - collect per-item failures.
                 errors.append(f"{track.label}: {exc}")
+                event_track_failures.setdefault(track.sound_track_id, str(exc))
                 continue
 
             normalized = await asyncio.to_thread(
@@ -417,6 +419,9 @@ async def run_audio_generation_pipeline(
             if raw_path.exists() and raw_path != event_path:
                 raw_path.unlink(missing_ok=True)
             if normalized is None:
+                event_track_failures.setdefault(
+                    track.sound_track_id, "No audio file was generated."
+                )
                 continue
 
             event_artifacts.append(
@@ -429,6 +434,18 @@ async def run_audio_generation_pipeline(
                     description=item.description,
                 )
             )
+
+        event_track_ids = {
+            item_context[item.item_id][1].sound_track_id
+            for item in event_items
+            if item.item_id in item_context
+        }
+        for track_id in event_track_ids:
+            if track_id in event_track_failures:
+                status = TrackStatus(state="failed", error=event_track_failures[track_id])
+            else:
+                status = TrackStatus(state="done")
+            video_asset = await _set_track_status(video_asset, store, track_id, status)
 
         if not event_artifacts and not track_artifacts:
             raise ValueError("No audio files were generated. " + "; ".join(errors))
@@ -592,6 +609,7 @@ async def run_track_regeneration_pipeline(
             raise ValueError("Sound track not found.")
         track_id = track.sound_track_id
 
+        original_model = track.generation_model
         update: dict[str, object] = {"generation_model": method}
         if description and description.strip():
             update["description"] = description.strip()
@@ -633,6 +651,20 @@ async def run_track_regeneration_pipeline(
                 out_dir=track_dir,
             )
         except Exception as exc:  # noqa: BLE001 - keep previous stem, surface error.
+            # Failed switch: keep the edited description but restore the model.
+            restored = track.model_copy(update={"generation_model": original_model})
+            video_asset = video_asset.model_copy(
+                update={
+                    "sound_timeline": timeline.model_copy(
+                        update={
+                            "sound_tracks": [
+                                restored if t.sound_track_id == track_id else t
+                                for t in timeline.sound_tracks
+                            ]
+                        }
+                    )
+                }
+            )
             await _set_track_status(
                 video_asset, store, track_id, TrackStatus(state="failed", error=str(exc))
             )
@@ -833,9 +865,21 @@ async def _rebuild_audio_outputs(
         track_artifacts = [
             a for a in video_asset.sound_track_audio_artifacts if a.origin != "mixed"
         ]
-    stem_artifacts = [a for a in track_artifacts if a.path.exists()]
+    # Stems only live on tracks that are still track-level; their events are not mixed.
+    track_level_ids = {
+        str(t.sound_track_id)
+        for t in timeline.sound_tracks
+        if t.generation_model in _TRACK_LEVEL_MODELS
+    }
+    stem_artifacts = [
+        a
+        for a in track_artifacts
+        if a.path.exists() and str(a.sound_track_id) in track_level_ids
+    ]
 
-    plan_item_ids = {item.item_id for item in audio_plan.items}
+    plan_item_ids = {
+        item.item_id for item in audio_plan.items if item.track_id not in track_level_ids
+    }
     kept_event_artifacts = [
         item
         for item in event_artifacts

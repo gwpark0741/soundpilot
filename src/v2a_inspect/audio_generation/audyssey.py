@@ -27,6 +27,8 @@ def source_plan(
         }
         for e in sorted(events, key=lambda e: e.start_frame_index)
     ]
+    # Audyssey rejects spans with end <= start; zero-length events round to one.
+    spans = [s for s in spans if s["end"] > s["start"]]
     return {
         "name": track.label,
         "kind": {"speech": "dialogue"}.get(track.track_type, track.track_type),

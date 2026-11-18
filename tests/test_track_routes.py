@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import numpy as np
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from v2a_inspect.models import (
     SoundTimeline,
     SoundTrack,
     SoundTrackAudioArtifact,
+    TrackStatus,
     VideoAsset,
 )
 from v2a_inspect.ui.pipeline import run_track_regeneration_pipeline
@@ -155,7 +157,10 @@ class TrackRouteTest(unittest.TestCase):
 
     def test_residual_toggle_queues_and_guards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            asset, _ = _asset(Path(temp_dir))
+            root = Path(temp_dir)
+            asset, _ = _asset(
+                root, has_audio=True, original_audio_path=_write_sine(root / "o.wav")
+            )
             client, _ = self._client(asset)
             with patch("v2a_inspect.ui.routes.run_residual_toggle_pipeline") as p:
                 response = client.post("/api/audio/residual", data={"enabled": "true"})
@@ -172,6 +177,103 @@ class TrackRouteTest(unittest.TestCase):
                 empty.post("/api/audio/residual", data={"enabled": "true"}).status_code,
                 404,
             )
+
+    def test_event_regenerate_and_delete_rejected_on_track_level_track(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, track = _asset(Path(temp_dir))  # selsync track
+            event = asset.sound_timeline.sound_events[0]
+            client, _ = self._client(asset)
+            with (
+                patch("v2a_inspect.ui.routes.run_event_audio_regeneration_pipeline") as regen,
+                patch("v2a_inspect.ui.routes.run_event_audio_delete_pipeline") as delete,
+            ):
+                r1 = client.post(
+                    f"/api/audio/events/{event.sound_event_id}/regenerate",
+                    data={"description": "x"},
+                )
+                r2 = client.delete(f"/api/audio/events/{event.sound_event_id}")
+
+            self.assertEqual((r1.status_code, r2.status_code), (409, 409))
+            self.assertIn("트랙", r1.json()["detail"])
+            regen.assert_not_called()
+            delete.assert_not_called()
+
+    def test_reset_run_clears_separation_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, track = _asset(
+                root,
+                separated_stem_paths={track_id: root / "s.wav" for track_id in [uuid4()]},
+                residual_path=root / "r.wav",
+                residual_enabled=True,
+                track_status={uuid4(): TrackStatus(state="done")},
+            )
+            client, store = self._client(asset)
+            with patch("v2a_inspect.ui.routes.run_sound_timeline_pipeline"):
+                response = client.post("/api/sound-timeline/reset-run")
+
+            self.assertEqual(response.status_code, 200)
+            reset = asyncio.run(store.snapshot()).asset
+            self.assertEqual(reset.separated_stem_paths, {})
+            self.assertIsNone(reset.residual_path)
+            self.assertFalse(reset.residual_enabled)
+            self.assertEqual(reset.track_status, {})
+
+    def test_import_keeps_json_audio_fields_when_files_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            raw = root / "raw.mp4"
+            raw.write_bytes(b"raw")
+            original = _write_sine(root / "orig.wav")
+            asset, _ = _asset(
+                root,
+                raw_video_path=raw,
+                original_audio_path=original,
+                has_audio=True,
+            )
+            letterboxed = VideoAsset(
+                source_path=root / "prepared.mp4",
+                frame_count=30,
+                raw_video_path=root / "prepared.mp4",
+                original_audio_path=None,
+                has_audio=False,
+            )
+            client, store = self._client(None)
+            with patch(
+                "v2a_inspect.ui.routes._resolve_import_video",
+                return_value=letterboxed,
+            ):
+                response = client.post(
+                    "/api/asset/import",
+                    files={
+                        "video": ("prepared.mp4", b"v", "video/mp4"),
+                        "asset": (
+                            "asset.json",
+                            asset.model_dump_json(exclude_computed_fields=True),
+                            "application/json",
+                        ),
+                    },
+                    data={"work_dir": temp_dir},
+                )
+
+            self.assertEqual(response.status_code, 200)
+            imported = asyncio.run(store.snapshot()).asset
+            self.assertEqual(imported.raw_video_path, raw)
+            self.assertEqual(imported.original_audio_path, original)
+            self.assertTrue(imported.has_audio)
+
+    def test_residual_enable_without_original_audio_is_422(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, _ = _asset(Path(temp_dir), has_audio=False)
+            client, _ = self._client(asset)
+            with patch("v2a_inspect.ui.routes.run_residual_toggle_pipeline") as p:
+                on = client.post("/api/audio/residual", data={"enabled": "true"})
+                off = client.post("/api/audio/residual", data={"enabled": "false"})
+
+            self.assertEqual(on.status_code, 422)
+            self.assertIn("원본 오디오", on.json()["detail"])
+            self.assertEqual(off.status_code, 200)
+            self.assertEqual(p.call_count, 1)
 
 
 class TrackRegenerationPipelineTest(unittest.TestCase):
@@ -351,6 +453,35 @@ class TrackRegenerationPipelineTest(unittest.TestCase):
             status = snapshot.asset.track_status[track.sound_track_id]
             self.assertEqual(status.state, "failed")
             self.assertIn("boom", status.error)
+
+    def test_failed_switch_restores_track_generation_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, track = _asset(root)
+            track = track.model_copy(update={"generation_model": "separate"})
+            asset = asset.model_copy(
+                update={
+                    "sound_timeline": asset.sound_timeline.model_copy(
+                        update={"sound_tracks": [track]}
+                    )
+                }
+            )
+            store = VideoAssetStore()
+            asyncio.run(store.set_complete_asset(asset))
+            with patch(
+                "v2a_inspect.ui.pipeline.generate_track",
+                side_effect=RuntimeError("boom"),
+            ):
+                asyncio.run(
+                    run_track_regeneration_pipeline(
+                        asset, store, str(track.sound_track_id), "selsync", "new", None
+                    )
+                )
+            snapshot = asyncio.run(store.snapshot())
+
+            self.assertEqual(snapshot.status, "failed")
+            (shown,) = snapshot.asset.sound_timeline.sound_tracks
+            self.assertEqual(shown.generation_model, "separate")
 
 
 if __name__ == "__main__":

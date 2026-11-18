@@ -154,6 +154,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             raise HTTPException(status_code=409, detail="Pipeline is running")
         if snapshot.asset is None:
             raise HTTPException(status_code=404, detail="No video asset loaded")
+        _reject_track_level_event(snapshot.asset, sound_event_id)
         background_tasks.add_task(
             run_event_audio_delete_pipeline, snapshot.asset, store, sound_event_id
         )
@@ -175,6 +176,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             raise HTTPException(status_code=409, detail="Pipeline is running")
         if snapshot.asset is None:
             raise HTTPException(status_code=404, detail="No video asset loaded")
+        _reject_track_level_event(snapshot.asset, sound_event_id)
         background_tasks.add_task(
             run_event_audio_regeneration_pipeline,
             snapshot.asset,
@@ -240,6 +242,13 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             raise HTTPException(status_code=409, detail="Pipeline is running")
         if snapshot.asset is None:
             raise HTTPException(status_code=404, detail="No video asset loaded")
+        if enabled and not (
+            snapshot.asset.has_audio and snapshot.asset.original_audio_path
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="원본 오디오가 없어 잔여 소리를 켤 수 없습니다.",
+            )
         background_tasks.add_task(
             run_residual_toggle_pipeline, snapshot.asset, store, enabled
         )
@@ -393,15 +402,20 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         sam3_tracking_path = resolved_video_asset.sam3_tracking_path
         if sam3_tracking_path is not None and not sam3_tracking_path.exists():
             sam3_tracking_path = None
-        imported_asset = imported_asset.model_copy(
-            update={
-                "source_path": resolved_video_asset.source_path,
-                "sam3_tracking_path": sam3_tracking_path,
-                "raw_video_path": resolved_video_asset.raw_video_path,
-                "original_audio_path": resolved_video_asset.original_audio_path,
-                "has_audio": resolved_video_asset.has_audio,
-            }
-        )
+        update = {
+            "source_path": resolved_video_asset.source_path,
+            "sam3_tracking_path": sam3_tracking_path,
+        }
+        # The JSON's audio fields win when its files exist; the upload may be the
+        # prepared (audio-stripped, letterboxed) video.
+        raw_video_path = imported_asset.raw_video_path
+        if raw_video_path is None or not raw_video_path.exists():
+            update["raw_video_path"] = resolved_video_asset.raw_video_path
+        original_audio_path = imported_asset.original_audio_path
+        if original_audio_path is None or not original_audio_path.exists():
+            update["original_audio_path"] = resolved_video_asset.original_audio_path
+            update["has_audio"] = resolved_video_asset.has_audio
+        imported_asset = imported_asset.model_copy(update=update)
         await store.set_complete_asset(imported_asset, stage="imported asset")
         return {"status": "imported"}
 
@@ -420,6 +434,10 @@ def create_router(store: VideoAssetStore) -> APIRouter:
                 "synthesized_video_path": None,
                 "sound_event_audio_artifacts": [],
                 "sound_track_audio_artifacts": [],
+                "separated_stem_paths": {},
+                "residual_path": None,
+                "residual_enabled": False,
+                "track_status": {},
             }
         )
         await store.publish_asset_mutation(
@@ -481,6 +499,25 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     return router
+
+
+def _reject_track_level_event(asset: VideoAsset, sound_event_id: str) -> None:
+    timeline = asset.sound_timeline
+    if timeline is None:
+        return
+    event = next(
+        (e for e in timeline.sound_events if str(e.sound_event_id) == sound_event_id),
+        None,
+    )
+    track = event and next(
+        (t for t in timeline.sound_tracks if t.sound_track_id == event.sound_track_id),
+        None,
+    )
+    if track is not None and track.generation_model in ("separate", "selsync"):
+        raise HTTPException(
+            status_code=409,
+            detail="분리/SelSync 트랙의 이벤트는 개별로 재생성할 수 없습니다. 트랙 재생성을 쓰세요.",
+        )
 
 
 def _root_dir(work_dir: str | None) -> Path:

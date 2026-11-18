@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,11 +13,13 @@ from scipy.io import wavfile
 from v2a_inspect.models import (
     AudioPlan,
     SoundEvent,
+    SoundEventAudioArtifact,
     SoundTimeline,
     SoundTrack,
     SoundTrackAudioArtifact,
     VideoAsset,
 )
+from v2a_inspect.audio_generation.plan import build_audio_plan
 from v2a_inspect.ui.pipeline import (
     _rebuild_audio_outputs,
     run_audio_generation_pipeline,
@@ -300,6 +303,134 @@ class TrackPipelineTest(unittest.TestCase):
             self.assertEqual(
                 mix.call_args.kwargs["generated_audio"], {str(tid): str(old.path)}
             )
+
+    def test_event_rebuild_drops_event_items_and_stale_stems_of_track_level_tracks(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            track = SoundTrack(
+                track_type="speech", label="Voice", generation_model="separate"
+            )
+            gone = SoundTrack(track_type="sfx", label="Gone", generation_model="t2a")
+            event = SoundEvent(
+                sound_track_id=track.sound_track_id,
+                start_frame_index=0,
+                end_frame_index=30,
+                description="hi",
+                spoken_text="hi",
+            )
+
+            def stem(t: SoundTrack, name: str) -> SoundTrackAudioArtifact:
+                return SoundTrackAudioArtifact(
+                    sound_track_id=t.sound_track_id,
+                    track_label=t.label,
+                    track_type=t.track_type,
+                    path=_write_sine(root / name),
+                    duration_sec=1.0,
+                    event_count=1,
+                    origin="separated",
+                    attempt=1,
+                )
+
+            asset = VideoAsset(
+                source_path=root / "video.mp4",
+                frame_count=30,
+                sound_timeline=SoundTimeline(
+                    sound_tracks=[track], sound_events=[event]
+                ),
+                # `gone` is no longer in the timeline, so its stem must be dropped.
+                sound_track_audio_artifacts=[
+                    stem(track, "a.wav"),
+                    stem(gone, "b.wav"),
+                ],
+            )
+            plan = build_audio_plan(
+                asset.sound_timeline, fps=asset.fps, total_duration=asset.duration_sec
+            )
+            event_wav = _write_sine(root / "event.wav")
+            event_artifact = SoundEventAudioArtifact(
+                sound_event_id=event.sound_event_id,
+                sound_track_id=track.sound_track_id,
+                path=event_wav,
+                duration_sec=1.0,
+                generation_model="tts",
+                description="hi",
+            )
+            with (
+                patch(
+                    "v2a_inspect.ui.pipeline.mix_audio_into_video",
+                    side_effect=_fake_mix,
+                ),
+                patch(
+                    "v2a_inspect.ui.pipeline.mix_audio_items_to_wav",
+                    side_effect=lambda items, ga, out, **k: str(_write_sine(Path(out))),
+                ) as mix_items,
+            ):
+                rebuilt = asyncio.run(
+                    _rebuild_audio_outputs(
+                        asset, plan, [event_artifact], VideoAssetStore()
+                    )
+                )
+
+            mix_items.assert_not_called()
+            (only,) = rebuilt.sound_track_audio_artifacts
+            self.assertEqual(only.sound_track_id, track.sound_track_id)
+            self.assertEqual(only.origin, "separated")
+            self.assertEqual(rebuilt.sound_event_audio_artifacts, [])
+
+    def test_event_level_track_failure_is_reported_in_track_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            speech = SoundTrack(track_type="speech", label="Voice", generation_model="tts")
+            ok = SoundTrack(track_type="sfx", label="Door", generation_model="t2a")
+            selsync = SoundTrack(track_type="sfx", label="Wind", generation_model="selsync")
+            events = [
+                SoundEvent(
+                    sound_track_id=t.sound_track_id,
+                    start_frame_index=0,
+                    end_frame_index=30,
+                    description=t.label,
+                    spoken_text="hi" if t is speech else None,
+                )
+                for t in (speech, ok)
+            ]
+            asset = VideoAsset(
+                source_path=root / "video.mp4",
+                frame_count=30,
+                sound_timeline=SoundTimeline(
+                    sound_tracks=[speech, ok, selsync], sound_events=events
+                ),
+            )
+
+            def fake_generate(**kw):
+                if kw["generation_model"] == "tts":
+                    raise RuntimeError("kokoro down")
+                return str(_write_sine(Path(kw["out_path"])))
+
+            with (
+                patch(
+                    "v2a_inspect.ui.pipeline.generate_audio_for_item",
+                    side_effect=fake_generate,
+                ),
+                patch(
+                    "v2a_inspect.ui.pipeline._convert_audio_to_wav",
+                    side_effect=lambda src, dst: Path(shutil.copy(src, dst)),
+                ),
+                patch("v2a_inspect.ui.pipeline.generate_track", side_effect=_fake_stem),
+                patch(
+                    "v2a_inspect.ui.pipeline.mix_audio_into_video",
+                    side_effect=_fake_mix,
+                ),
+            ):
+                snapshot = asyncio.run(_run(asset))
+
+            self.assertEqual(snapshot.status, "complete")
+            status = snapshot.asset.track_status
+            self.assertEqual(status[speech.sound_track_id].state, "failed")
+            self.assertIn("kokoro down", status[speech.sound_track_id].error)
+            self.assertEqual(status[ok.sound_track_id].state, "done")
+            self.assertEqual(status[selsync.sound_track_id].state, "done")
 
 
 if __name__ == "__main__":
