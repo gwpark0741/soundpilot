@@ -100,6 +100,7 @@ services:
       - "127.0.0.1:${V2A_INSPECT_UI_PORT:-8501}:8501"
     environment:
       V2A_INSPECT_UI_HOST: 0.0.0.0
+      V2A_INSPECT_VIDEO_ENCODE_USE_NVENC: "false" # A100 has no NVENC; image default is true
       V2A_INSPECT_UI_PORT: 8501
       V2A_INSPECT_UI_WORK_DIR: /data/work
       V2A_INSPECT_UI_STATIC_DIR: /app/web/dist

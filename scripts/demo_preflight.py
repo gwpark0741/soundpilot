@@ -113,7 +113,13 @@ def check_gemini() -> str | None:
 
 def check_elevenlabs() -> str | None:
     key = os.environ.get("ELEVENLABS_API_KEY")
-    return _key_check("https://api.elevenlabs.io/v1/user", {"xi-api-key": key} if key else None)
+    if not key:
+        return "key not set in environment"
+    r = httpx.get("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": key}, timeout=10)
+    # scoped keys (no user_read) are authenticated but get 401 missing_permissions
+    if r.status_code == 401 and "missing_permissions" in r.text:
+        return None
+    return None if r.status_code == 200 else f"HTTP {r.status_code}"
 
 
 def _our_pids() -> set[str]:
