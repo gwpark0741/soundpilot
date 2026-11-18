@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import Icon, { STATUS_ICON } from "./Icon";
 import { methodLabel, statusView, trackActions, type TrackAction } from "../lib/selection";
 import type { AudioTrackArtifact, SoundEvent, SoundTrack, TrackStatus } from "../types";
 
@@ -17,6 +18,7 @@ interface SelectedTrackPanelProps {
   onRegenerateEvent: (eventId: string, description: string, spokenText: string | null) => void;
 }
 
+const STATUS_CLASS = { ok: "done", run: "run", wait: "queue", err: "fail" } as const;
 const ACTION_VIEW: Record<TrackAction, { label: string; method: "separate" | "selsync" }> = {
   "re-separate": { label: "Re-separate", method: "separate" },
   "generate-instead": { label: "Generate instead", method: "selsync" },
@@ -99,7 +101,12 @@ export default function SelectedTrackPanel({
         <div className="d-head">
           <span className="sw" style={{ background: objectColor }} aria-hidden="true" />
           <h3>{track.label}</h3>
-          {view.label ? <span className={`st st-${view.tone === "ok" ? "done" : view.tone === "run" ? "run" : view.tone === "wait" ? "queue" : "fail"}`}>{view.label}</span> : null}
+          {view.label ? (
+            <span className={`st st-${STATUS_CLASS[view.tone ?? "err"]}`}>
+              <Icon name={STATUS_ICON[view.tone ?? "err"]} />
+              {view.label}
+            </span>
+          ) : null}
         </div>
         <div className="d-meta">
           <span className={`badge ${track.generation_model === "separate" ? "badge-sep" : "badge-gen"}`}>
@@ -109,9 +116,13 @@ export default function SelectedTrackPanel({
         </div>
         {status?.state === "failed" ? (
           <div className="err">
+            <Icon name="x" />
             <div>
               {status.error || "Generation failed."}
-              <p>Previous audio kept.</p>
+              <p>
+                <Icon name="info" />
+                Previous audio kept.
+              </p>
             </div>
           </div>
         ) : null}
@@ -149,7 +160,12 @@ export default function SelectedTrackPanel({
             </div>
           </>
         )}
-        {blocked ? <p className="reason" id={whyId}>{blockedReason}</p> : null}
+        {blocked ? (
+          <p className="reason" id={whyId}>
+            <Icon name="info" />
+            {blockedReason}
+          </p>
+        ) : null}
       </article>
       {hasAudio ? (
         <div className="resid">

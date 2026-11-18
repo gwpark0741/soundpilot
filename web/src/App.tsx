@@ -6,11 +6,11 @@ import {
   resetSoundTimeline,
   startRun,
   generateAudio,
-  deleteEventAudio,
   regenerateEventAudio,
   regenerateTrackAudio,
   setResidualEnabled,
 } from "./api";
+import { failure } from "./lib/errors";
 import type { VideoAsset } from "./types";
 import VideoEditor from "./components/VideoEditor";
 import type { AssetResponse } from "./types";
@@ -54,7 +54,8 @@ export default function App() {
       await startRun(event.currentTarget);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not analyze the video.", error, "Check the video, then press Run again."));
+      throw error;
     }
   }
 
@@ -65,7 +66,8 @@ export default function App() {
       await importAsset(event.currentTarget);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not load the project.", error, "Check both files, then press Load again."));
+      throw error;
     }
   }
 
@@ -75,7 +77,8 @@ export default function App() {
       await resetSoundTimeline();
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not reset the soundtrack.", error, "Try again in a moment."));
+      throw error;
     }
   }
 
@@ -85,30 +88,18 @@ export default function App() {
       await cleanAsset();
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not clean the workspace.", error, "Try again in a moment."));
       throw error;
     }
   }
 
-  async function handleGenerateAudio(event: FormEvent<HTMLFormElement>, draftAsset: VideoAsset | null) {
-    event.preventDefault();
+  async function handleGenerateAudio(serverUrl: string, draftAsset: VideoAsset | null) {
     setSubmitError(null);
     try {
-      await generateAudio(event.currentTarget, draftAsset);
+      await generateAudio(serverUrl, draftAsset);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function handleDeleteEventAudio(soundEventId: string) {
-    setSubmitError(null);
-    try {
-      await deleteEventAudio(soundEventId);
-      await refreshAssetSummary();
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not generate audio.", error, "Check the inference server URL, then press Generate audio again."));
       throw error;
     }
   }
@@ -124,7 +115,7 @@ export default function App() {
       await regenerateEventAudio(soundEventId, description, spokenText, serverUrl);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not regenerate the event audio.", error, "Press Regenerate to try again."));
       throw error;
     }
   }
@@ -139,7 +130,7 @@ export default function App() {
       await regenerateTrackAudio(trackId, method, description ?? undefined);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not regenerate the track.", error, "Press Regenerate to try again."));
       throw error;
     }
   }
@@ -150,7 +141,7 @@ export default function App() {
       await setResidualEnabled(enabled);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not update the soundtrack mix.", error, "Try the switch again."));
       throw error;
     }
   }
@@ -164,7 +155,6 @@ export default function App() {
       onClean={handleClean}
       onResetSoundTimeline={handleResetSoundTimeline}
       onGenerateAudio={handleGenerateAudio}
-      onDeleteEventAudio={handleDeleteEventAudio}
       onRegenerateEventAudio={handleRegenerateEventAudio}
       onRegenerateTrack={handleRegenerateTrack}
       onSetResidual={handleSetResidual}

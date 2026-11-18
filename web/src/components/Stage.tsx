@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import Icon from "./Icon";
 import TrackingOverlay from "./TrackingOverlay";
 import type { TrackWindowTrack, VideoSummary } from "../types";
 
@@ -50,41 +51,43 @@ export default function Stage({
 
   return (
     <>
-      <div className="video-frame">
-        <video
-          ref={videoRef}
-          src={videoSrc}
-          onPause={() => onVideoPlayState?.(false)}
-          onPlay={() => onVideoPlayState?.(true)}
-          onSeeked={onVideoSync}
-          onTimeUpdate={onVideoSync}
-        />
-        <TrackingOverlay
-          video={video}
-          tracks={tracks}
-          frame={frame}
-          highlightSceneTrackIds={highlightSceneTrackIds}
-          highlightColor={highlightColor}
-        />
-        {chipText ? (
-          <p className="stage-chip">
-            <span
-              aria-hidden="true"
-              className={hasMask ? "stage-sw" : "stage-sw none"}
-              style={hasMask ? { background: highlightColor } : undefined}
-            />
-            {chipText}
-          </p>
-        ) : null}
+      <div className="stage-view">
+        <div className="video-box">
+          <video
+            ref={videoRef}
+            src={videoSrc}
+            onPause={() => onVideoPlayState?.(false)}
+            onPlay={() => onVideoPlayState?.(true)}
+            onSeeked={onVideoSync}
+            onTimeUpdate={onVideoSync}
+          />
+          <TrackingOverlay
+            video={video}
+            tracks={tracks}
+            frame={frame}
+            highlightSceneTrackIds={highlightSceneTrackIds}
+            highlightColor={highlightColor}
+          />
+          {chipText ? (
+            <p className="chip">
+              <span
+                aria-hidden="true"
+                className={hasMask ? "sw" : "sw sw-none"}
+                style={hasMask ? { background: highlightColor } : undefined}
+              />
+              {chipText}
+            </p>
+          ) : null}
+        </div>
       </div>
       <div className="transport">
         <button
           aria-label={isPlaying ? "Pause video" : "Play video"}
-          className="toggle"
+          className="btn ico"
           onClick={onTogglePlay}
           type="button"
         >
-          {isPlaying ? "Pause" : "Play"}
+          <Icon name={isPlaying ? "pause" : "play"} />
         </button>
         <input
           aria-label="Frame"

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, type CSSProperties, type PointerEvent } from "react";
+import Icon, { STATUS_ICON } from "./Icon";
 import { methodLabel, objectColor, statusView } from "../lib/selection";
 import type {
   AudioTrackArtifact,
@@ -22,7 +23,6 @@ interface TimelineProps {
     startFrame: number,
     endFrame: number,
   ) => void;
-  onEditSoundEventDetails?: (soundEventId: string) => void;
   selectedTrackId: string | null;
   onSelectTrack: (trackId: string) => void;
   soloTrackId: string | null;
@@ -60,7 +60,6 @@ export default function Timeline({
   onSelectFrame,
   onPlayTrackAudio,
   onEditSoundEvent,
-  onEditSoundEventDetails,
   selectedTrackId,
   onSelectTrack,
   soloTrackId,
@@ -182,15 +181,15 @@ export default function Timeline({
             }
           }}
         >
-          {ticks.map((second, index) => (
-            <span
-              className={`tick t${index}`}
-              key={second}
-              style={{ left: `${((second * fps) / timelineEndFrame) * 100}%` }}
-            >
-              {second} s
-            </span>
-          ))}
+          {ticks.map((second, index) => {
+            const left = ((second * fps) / timelineEndFrame) * 100;
+            // A tick near the right edge hangs to its left so its label stays inside the ruler.
+            return (
+              <span className={`tick t${index}${left > 92 ? " end" : ""}`} key={second} style={{ left: `${left}%` }}>
+                {second} s
+              </span>
+            );
+          })}
           <span className="playhead" style={{ left: playheadLeft }} />
         </div>
       </div>
@@ -243,6 +242,7 @@ export default function Timeline({
                           status.tone === "run" ? "run" : status.tone === "wait" ? "queue" : "fail"
                         }`}
                       >
+                        <Icon name={STATUS_ICON[status.tone ?? "err"]} />
                         {status.label}
                       </span>
                     ) : null}
@@ -257,9 +257,7 @@ export default function Timeline({
                     title={noAudioTitle}
                     type="button"
                   >
-                    <svg aria-hidden="true" className="ic" height="16" viewBox="0 0 16 16" width="16">
-                      <path d="M5.75 3.5v9l7-4.5z" />
-                    </svg>
+                    <Icon name="play" />
                   </button>
                   <button
                     aria-label={`Solo ${soundTrack.label}`}
@@ -292,14 +290,6 @@ export default function Timeline({
                       aria-label={`Edit ${row.label} event, frames ${row.start_frame} to ${row.end_frame}`}
                       className={bar.width >= 50 ? "ev long" : "ev"}
                       key={row.sound_event_id ?? `${id}-${row.start_frame}-${row.end_frame}-${index}`}
-                      onDoubleClick={
-                        row.sound_event_id && onEditSoundEventDetails
-                          ? (event) => {
-                              event.stopPropagation();
-                              onEditSoundEventDetails(row.sound_event_id!);
-                            }
-                          : undefined
-                      }
                       onPointerDown={editable ? (event) => startSoundEventEdit(event, row) : undefined}
                       style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
                       tabIndex={-1}

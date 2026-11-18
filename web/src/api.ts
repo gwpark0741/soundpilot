@@ -1,6 +1,5 @@
 import type {
   AssetResponse,
-  CurrentFrameRows,
   FullAssetResponse,
   TrackWindowResponse,
   VideoAsset,
@@ -31,18 +30,6 @@ export async function cleanAsset(): Promise<void> {
     const message = await response.text();
     throw new Error(message || `Failed to clean asset: ${response.status}`);
   }
-}
-
-export async function fetchCurrentFrame(
-  frame: number,
-  signal?: AbortSignal,
-): Promise<CurrentFrameRows | null> {
-  const response = await fetch(`/api/rows/current-frame?frame=${frame}`, { signal });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch frame rows: ${response.status}`);
-  }
-  const payload = await response.json();
-  return payload.rows;
 }
 
 export async function fetchTrackingWindow(
@@ -94,8 +81,11 @@ export async function resetSoundTimeline(): Promise<void> {
   }
 }
 
-export async function generateAudio(form: HTMLFormElement, asset: VideoAsset | null): Promise<void> {
-  const formData = new FormData(form);
+export async function generateAudio(serverUrl: string, asset: VideoAsset | null): Promise<void> {
+  const formData = new FormData();
+  if (serverUrl.trim()) {
+    formData.append("server_url", serverUrl.trim());
+  }
   if (asset) {
     const assetBlob = new Blob([JSON.stringify(asset)], { type: "application/json" });
     formData.append("asset", assetBlob, "edited-asset.json");
@@ -107,16 +97,6 @@ export async function generateAudio(form: HTMLFormElement, asset: VideoAsset | n
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Failed to generate audio: ${response.status}`);
-  }
-}
-
-export async function deleteEventAudio(soundEventId: string): Promise<void> {
-  const response = await fetch(`/api/audio/events/${soundEventId}`, {
-    method: "DELETE",
-  });
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Failed to delete event audio: ${response.status}`);
   }
 }
 

@@ -110,7 +110,7 @@ function indexTrackPoints(tracks: TrackWindowTrack[], sceneTrackIds: string[]): 
   return index;
 }
 
-// All masks of the frame in one image: translucent fill, 1px (=2 source px) colour edge,
+// All masks of the frame in one image: translucent fill, 2px (=4 source px) colour edge,
 // and a dark halo ring just outside it. Pixels are written as packed little-endian ABGR.
 function paintMasks(rles: string[], color: string): HTMLCanvasElement {
   if (!maskCanvas || !maskImage || !maskPixels) {
@@ -140,7 +140,13 @@ function paintMasks(rles: string[], color: string): HTMLCanvasElement {
       const up = i >= MASK_W ? m[i - MASK_W] : 0;
       const down = i + MASK_W < last ? m[i + MASK_W] : 0;
       if (m[i]) {
-        px[i] = left && right && up && down ? FILL : EDGE;
+        // Edge is 2 mask px (= 4 source px, ~3 CSS px as in the mockup's 3px stroke).
+        px[i] =
+          left && right && up && down &&
+          (x > 1 ? m[i - 2] : 0) && (x < MASK_W - 2 ? m[i + 2] : 0) &&
+          (i >= 2 * MASK_W ? m[i - 2 * MASK_W] : 0) && (i + 2 * MASK_W < last ? m[i + 2 * MASK_W] : 0)
+            ? FILL
+            : EDGE;
       } else {
         px[i] = left | right | up | down ? HALO : 0;
       }

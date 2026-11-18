@@ -1,8 +1,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Inspector from "./Inspector";
+import OpenVideoDialog from "./OpenVideoDialog";
 import Timeline from "./Timeline";
 import SelectedTrackPanel from "./SelectedTrackPanel";
 import Stage from "./Stage";
+import TopBar from "./TopBar";
 import { fetchAssetForExport, fetchTrackingWindow } from "../api";
 import { highlightFor, objectColor, transportAction } from "../lib/selection";
 import type {
@@ -10,7 +11,6 @@ import type {
   AudioEventArtifact,
   AudioTrackArtifact,
   SoundEvent,
-  SoundTrack,
   TimelineRow,
   TrackWindowResponse,
   VideoAsset,
@@ -23,8 +23,7 @@ interface VideoEditorProps {
   onImport: (event: FormEvent<HTMLFormElement>) => void;
   onClean: () => Promise<void> | void;
   onResetSoundTimeline: () => void;
-  onGenerateAudio?: (event: FormEvent<HTMLFormElement>, draftAsset: VideoAsset | null) => Promise<void> | void;
-  onDeleteEventAudio?: (soundEventId: string) => Promise<void> | void;
+  onGenerateAudio?: (serverUrl: string, draftAsset: VideoAsset | null) => Promise<void> | void;
   onRegenerateEventAudio?: (
     soundEventId: string,
     description: string,
@@ -64,7 +63,6 @@ export default function VideoEditor({
   onClean,
   onResetSoundTimeline,
   onGenerateAudio,
-  onDeleteEventAudio,
   onRegenerateEventAudio,
   onRegenerateTrack,
   onSetResidual,
@@ -72,15 +70,14 @@ export default function VideoEditor({
   const [frame, setFrame] = useState(0);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [soloTrackId, setSoloTrackId] = useState<string | null>(null);
-  const [showExport, setShowExport] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [serverUrl, setServerUrl] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [trackWindow, setTrackWindow] = useState<TrackWindowResponse | null>(null);
   const [timelineRows, setTimelineRows] = useState<TimelineRow[]>(state.timeline_rows);
   const [baseAsset, setBaseAsset] = useState<VideoAsset | null>(null);
   const [draftAsset, setDraftAsset] = useState<VideoAsset | null>(null);
-  const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [hasTimelineEdits, setHasTimelineEdits] = useState(false);
-  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
   const audioPreviewMutedRestoreRef = useRef<boolean | null>(null);
@@ -137,39 +134,6 @@ export default function VideoEditor({
     () => baseAsset?.sound_event_audio_artifacts ?? state.audio_events ?? [],
     [baseAsset, state.audio_events],
   );
-  const generatedAudioItems = useMemo(() => {
-    const rowsByEvent = new Map<string, TimelineRow>();
-    for (const row of timelineRows) {
-      if (row.sound_event_id) {
-        rowsByEvent.set(row.sound_event_id, row);
-      }
-    }
-    const tracksById = new Map<string, SoundTrack>(
-      soundTracks.map((track) => [track.sound_track_id, track]),
-    );
-    return audioEventArtifacts
-      .map((artifact) => ({
-        artifact,
-        row: rowsByEvent.get(artifact.sound_event_id),
-        track: tracksById.get(artifact.sound_track_id),
-      }))
-      .sort(
-        (left, right) =>
-          (left.row?.start_frame ?? 0) - (right.row?.start_frame ?? 0),
-      );
-  }, [audioEventArtifacts, soundTracks, timelineRows]);
-  const counts = useMemo(() => {
-    const scenes = countRows(timelineRows, "scene");
-    const tracks = countRows(timelineRows, "track");
-    const visualEvents = timelineRows.filter((row) =>
-      row.lane.startsWith("visual: "),
-    ).length;
-    const soundEvents = timelineRows.filter(isSoundRow).length;
-    const soundTracks = new Set(
-      timelineRows.filter(isSoundRow).map((row) => row.lane),
-    ).size;
-    return { scenes, tracks, visualEvents, soundTracks, soundEvents };
-  }, [timelineRows]);
   const selectFrame = useCallback(
     (nextFrame: number) => {
       stopPreviewAudio(true);
@@ -188,7 +152,6 @@ export default function VideoEditor({
       return;
     }
     setTimelineRows(state.timeline_rows);
-    setExportStatus(null);
     let alive = true;
     void fetchAssetForExport()
       .then((asset) => {
@@ -392,59 +355,6 @@ export default function VideoEditor({
     playSyncedAudio(trackAudioUrl(soundTrackId), startFrame / fps, startFrame);
   }
 
-  function playEventAudio(soundEventId: string, startFrame: number) {
-    playSyncedAudio(eventAudioUrl(soundEventId), 0, startFrame);
-  }
-
-  async function deleteSoundEventAudio(soundEventId: string) {
-    if (!onDeleteEventAudio || state.status === "running") {
-      return;
-    }
-    if (!window.confirm("Delete generated audio for this event?")) {
-      return;
-    }
-    stopPreviewAudio(false);
-    try {
-      await onDeleteEventAudio(soundEventId);
-    } catch {
-      return;
-    }
-    setHasTimelineEdits(false);
-    setEditingEventId((current) => (current === soundEventId ? null : current));
-    setExportStatus("Queued event audio delete.");
-  }
-
-  async function regenerateSoundEventAudio(
-    form: HTMLFormElement,
-    soundEventId: string,
-    isSpeech: boolean,
-  ) {
-    if (!onRegenerateEventAudio || regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)) {
-      return;
-    }
-    const fd = new FormData(form);
-    const description = String(fd.get("description") || "").trim();
-    const spokenText = isSpeech ? String(fd.get("spoken_text") || "").trim() : null;
-    const serverUrl = String(fd.get("server_url") || "").trim() || null;
-    if (!description || (isSpeech && !spokenText)) {
-      return;
-    }
-    try {
-      await onRegenerateEventAudio(
-        soundEventId,
-        description,
-        spokenText || null,
-        serverUrl,
-      );
-    } catch (error) {
-      setExportStatus(error instanceof Error ? error.message : String(error));
-      return;
-    }
-    submitEditSoundEventDetails(soundEventId, description, spokenText);
-    setHasTimelineEdits(false);
-    setExportStatus("Queued event audio regeneration.");
-  }
-
   async function regenerateEventFromPanel(
     soundEventId: string,
     description: string,
@@ -455,13 +365,12 @@ export default function VideoEditor({
     }
     try {
       await onRegenerateEventAudio(soundEventId, description, spokenText, null);
-    } catch (error) {
-      setExportStatus(error instanceof Error ? error.message : String(error));
+    } catch {
+      // App reports the failure through submitError.
       return;
     }
     submitEditSoundEventDetails(soundEventId, description, spokenText);
     setHasTimelineEdits(false);
-    setExportStatus("Queued event audio regeneration.");
   }
 
   function togglePlayback() {
@@ -513,7 +422,6 @@ export default function VideoEditor({
           : currentAsset,
       );
       setHasTimelineEdits(true);
-      setExportStatus("Timestamp edits are ready to export.");
     },
     [maxFrame, timelineFrameCount],
   );
@@ -522,11 +430,6 @@ export default function VideoEditor({
     setTimelineRows(state.timeline_rows);
     setDraftAsset(baseAsset ? cloneAsset(baseAsset) : null);
     setHasTimelineEdits(false);
-    setExportStatus("Local timeline edits reset.");
-  }
-
-  function startEditingSoundEventDetails(soundEventId: string) {
-    setEditingEventId(soundEventId);
   }
 
   function submitEditSoundEventDetails(
@@ -570,13 +473,10 @@ export default function VideoEditor({
       ),
     );
     setHasTimelineEdits(true);
-    setExportStatus("Updated sound event details.");
-    setEditingEventId(null);
     return true;
   }
 
-  async function submitGenerateAudio(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitGenerateAudio() {
     if (!onGenerateAudio) {
       return;
     }
@@ -584,7 +484,7 @@ export default function VideoEditor({
       ? clearGeneratedAudio(applyTimelineEdits(draftAsset, timelineRows))
       : null;
     try {
-      await onGenerateAudio(event, committedAsset);
+      await onGenerateAudio(serverUrl, committedAsset);
     } catch {
       return;
     }
@@ -593,27 +493,14 @@ export default function VideoEditor({
       setDraftAsset(cloneAsset(committedAsset));
     }
     setHasTimelineEdits(false);
-    setExportStatus("Queued audio generation.");
   }
 
-  async function exportEditedAsset() {
-    try {
-      const asset = draftAsset ?? (await fetchAssetForExport());
-      if (!asset) {
-        setExportStatus("No VideoAsset JSON is available to export.");
-        return;
-      }
-      const editedAsset = applyTimelineEdits(asset, timelineRows);
-      downloadJson(editedAsset, "video-asset-edited.json");
-      setHasTimelineEdits(false);
-      setExportStatus("Exported video-asset-edited.json.");
-    } catch (error) {
-      setExportStatus(
-        error instanceof Error
-          ? `Export failed: ${error.message}`
-          : `Export failed: ${String(error)}`,
-      );
+  function exportEditedAsset() {
+    if (!draftAsset) {
+      return;
     }
+    downloadJson(applyTimelineEdits(draftAsset, timelineRows), "video-asset-edited.json");
+    setHasTimelineEdits(false);
   }
 
   async function cleanWorkspace() {
@@ -635,481 +522,116 @@ export default function VideoEditor({
     setTimelineRows([]);
     setBaseAsset(null);
     setDraftAsset(null);
-    setEditingEventId(null);
     setHasTimelineEdits(false);
-    setExportStatus("Cleaned workspace.");
   }
 
+  const mp4Ready = state.status === "complete" && !!baseAsset?.synthesized_video_path && !hasTimelineEdits;
+  const mp4Href = `/api/synthesized-video?asset_version=${state.asset_version}`;
+
   return (
-    <main className="editor-shell">
-      <header className="topbar">
-        <div>
-          <h1>V2A Inspect</h1>
-          <p>Live VideoAsset editor</p>
-        </div>
-        <div className={`status status-${state.status}`}>
-          <strong>{state.status}</strong>
-          <span>{state.stage ?? "no stage"}</span>
-        </div>
-      </header>
-
-      <section className="workspace">
-        <aside className="controls">
-          <form onSubmit={onSubmit}>
-            <label>
-              Video
-              <input name="video" type="file" accept="video/*" required />
-            </label>
-            <label>
-              Work directory
-              <input
-                name="work_dir"
-                type="text"
-                placeholder="/tmp/v2a-inspect-ui"
-              />
-            </label>
-            <label>
-              Inference server URL
-              <input name="server_url" type="url" placeholder="http://..." />
-            </label>
-            <div className="split-inputs">
-              <label>
-                Scene threshold
-                <input
-                  name="scene_threshold"
-                  type="number"
-                  min="1"
-                  max="100"
-                  step="1"
-                  defaultValue="27"
-                />
-              </label>
-              <label>
-                Keyframes
-                <input
-                  name="max_keyframes_per_scene"
-                  type="number"
-                  min="1"
-                  max="100"
-                  step="1"
-                  defaultValue="20"
-                />
-              </label>
-            </div>
-            <button type="submit" disabled={state.status === "running"}>
-              Run pipeline
-            </button>
-          </form>
-          <form className="import-form" onSubmit={onImport}>
-            <label>
-              Video
-              <input name="video" type="file" accept="video/*" required />
-            </label>
-            <label>
-              VideoAsset JSON
-              <input
-                name="asset"
-                type="file"
-                accept="application/json,.json"
-                required
-              />
-            </label>
-            <label>
-              Work directory
-              <input
-                name="work_dir"
-                type="text"
-                placeholder="/tmp/v2a-inspect-ui"
-              />
-            </label>
-            <button type="submit" disabled={state.status === "running"}>
-              Import asset
-            </button>
-          </form>
-          {submitError ? <p className="error">{submitError}</p> : null}
-          {state.error ? <p className="error">{state.error}</p> : null}
-          <section className="export-panel">
-            <button
-              className="toggle danger"
-              disabled={state.status === "running" || (!video && !draftAsset)}
-              onClick={cleanWorkspace}
-              type="button"
-            >
-              Clean workspace
-            </button>
-            <button
-              className="toggle"
-              disabled={!video || state.status === "running"}
-              onClick={onResetSoundTimeline}
-              type="button"
-            >
-              Reset + rerun soundtrack
-            </button>
-            <button
-              className={showExport ? "toggle active" : "toggle"}
-              onClick={() => setShowExport((value) => !value)}
-              type="button"
-            >
-              Export
-            </button>
-            {showExport ? (
-              <>
-                <button
-                  className="download-link"
-                  disabled={!draftAsset}
-                  onClick={exportEditedAsset}
-                  type="button"
-                >
-                  Download edited VideoAsset JSON
-                </button>
-                <button
-                  className="download-link secondary"
-                  disabled={!hasTimelineEdits}
-                  onClick={resetTimestampEdits}
-                  type="button"
-                >
-                  Reset timestamp edits
-                </button>
-                {exportStatus ? <p className="muted">{exportStatus}</p> : null}
-              </>
-            ) : null}
-          </section>
-            <form onSubmit={submitGenerateAudio}>
-              <label>
-                Inference server URL
-                <input name="server_url" type="url" placeholder="http://..." />
-              </label>
-              <button type="submit" disabled={state.status === "running" || !video}>
-                Generate Audio
-              </button>
-              {state.status === "complete" && baseAsset?.synthesized_video_path && !hasTimelineEdits ? (
-                <div style={{ marginTop: "0.5rem" }}>
-                  <a
-                    href={`/api/synthesized-video?asset_version=${state.asset_version}`}
-                    download={`synthesized_${state.asset_version}.mp4`}
-                    style={{ textDecoration: "none" }}
-                  >
-                    <button type="button" style={{ width: "100%" }}>
-                      Download Video(MP4)
-                    </button>
-                  </a>
-                </div>
-              ) : null}
-            </form>
-            {generatedAudioItems.length > 0 && !hasTimelineEdits ? (
-              <section
-                className="generated-audio-panel"
-                aria-label="Generated event audio"
-              >
-                <div className="generated-audio-header">
-                  <h2>Generated Audio</h2>
-                  <span>{generatedAudioItems.length} events</span>
-                </div>
-                <div className="generated-audio-list">
-                  {generatedAudioItems.map(({ artifact, row, track }) => {
-                    const startFrame = row?.start_frame ?? 0;
-                    const endFrame = row?.end_frame ?? startFrame;
-                    const label = row?.label ?? artifact.description;
-                    return (
-                      <article
-                        className="generated-audio-item"
-                        key={artifact.sound_event_id}
-                      >
-                        <div className="generated-audio-meta">
-                          <strong title={label}>{label}</strong>
-                          <span>
-                            {track?.label ?? artifact.sound_track_id} | {artifact.generation_model.toUpperCase()} |{" "}
-                            {(startFrame / fps).toFixed(2)}-
-                            {(endFrame / fps).toFixed(2)}s
-                          </span>
-                        </div>
-                        <audio
-                          controls
-                          preload="auto"
-                          src={eventAudioUrl(artifact.sound_event_id)}
-                          aria-label={`Audio preview for ${label}`}
-                        />
-                        <div className="generated-audio-actions">
-                          <button
-                            className="toggle"
-                            onClick={() =>
-                              playEventAudio(artifact.sound_event_id, startFrame)
-                            }
-                            type="button"
-                          >
-                            Play with video
-                          </button>
-                          <button
-                            className="toggle"
-                            disabled={state.status === "running" || !row}
-                            onClick={() => setEditingEventId(artifact.sound_event_id)}
-                            type="button"
-                          >
-                            Edit / Regenerate
-                          </button>
-                          <button
-                            className="toggle danger"
-                            disabled={state.status === "running"}
-                            onClick={() => void deleteSoundEventAudio(artifact.sound_event_id)}
-                            type="button"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              </section>
-            ) : null}
-
-          <dl className="asset-stats">
-            <div>
-              <dt>Version</dt>
-              <dd>{state.version}</dd>
-            </div>
-            <div>
-              <dt>Frames</dt>
-              <dd>{video?.frame_count ?? "-"}</dd>
-            </div>
-            <div>
-              <dt>Scenes</dt>
-              <dd>{counts.scenes}</dd>
-            </div>
-            <div>
-              <dt>Tracks</dt>
-              <dd>{counts.tracks}</dd>
-            </div>
-            <div>
-              <dt>Visual events</dt>
-              <dd>{counts.visualEvents}</dd>
-            </div>
-            <div>
-              <dt>Sound</dt>
-              <dd>
-                {counts.soundTracks}/{counts.soundEvents}
-              </dd>
-            </div>
-          </dl>
-        </aside>
-
-        <section className="editor">
-          <div className="preview-grid">
-            <div className="video-panel">
-              {video ? (
-                <Stage
-                  frame={selectedFrame}
-                  highlightColor={highlightColor}
-                  highlightLabel={highlightLabel}
-                  highlightSceneTrackIds={highlightSceneTrackIds}
-                  isPlaying={isPlaying}
-                  maxFrame={maxFrame}
-                  onSelectFrame={selectFrame}
-                  onTogglePlay={togglePlayback}
-                  onVideoPlayState={setIsPlaying}
-                  onVideoSync={syncFrameFromVideo}
-                  tracks={trackWindow?.tracks ?? []}
-                  video={video}
-                  videoRef={videoRef}
-                  videoSrc={
-                    state.status === "complete" && baseAsset?.synthesized_video_path && !hasTimelineEdits
-                      ? `/api/synthesized-video?asset_version=${state.asset_version}`
-                      : `/api/video?asset_version=${state.asset_version}`
-                  }
-                />
-              ) : (
-                <div className="empty-video">Upload a video to start</div>
-              )}
-
-              {state.status === "complete" && baseAsset?.synthesized_video_path && !hasTimelineEdits ? (
-                <section className="export-panel" style={{ marginTop: "1rem", borderTop: "2px solid #333", paddingTop: "1rem" }}>
-                  <button className="toggle active" type="button" style={{ cursor: "default" }}>
-                    Synthesized Video
-                  </button>
-                  <a
-                    className="download-link"
-                    href={`/api/synthesized-video?asset_version=${state.asset_version}`}
-                    download={`synthesized_${state.asset_version}.mp4`}
-                  >
-                    Save Video (MP4)
-                  </a>
-                </section>
-              ) : null}
-            </div>
-            {selectedTrack ? (
-              <SelectedTrackPanel
-                key={selectedTrack.sound_track_id}
-                track={selectedTrack}
-                artifact={audioTrackArtifacts.find((a) => a.sound_track_id === selectedTrack.sound_track_id)}
-                status={baseAsset?.track_status?.[selectedTrack.sound_track_id]}
-                appRunning={state.status === "running"}
-                blockedReason={regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)}
-                hasAudio={baseAsset?.has_audio ?? false}
-                residualEnabled={baseAsset?.residual_enabled ?? false}
-                objectColor={highlightColor}
-                onRegenerate={(method, description) =>
-                  // App already reports the failure via submitError.
-                  void Promise.resolve(onRegenerateTrack?.(selectedTrack.sound_track_id, method, description)).catch(() => {})
-                }
-                onSetResidual={(enabled) => void Promise.resolve(onSetResidual?.(enabled)).catch(() => {})}
-                events={(draftAsset?.sound_timeline?.sound_events ?? []).filter(
-                  (event) => event.sound_track_id === selectedTrack.sound_track_id,
-                )}
-                onRegenerateEvent={(id, description, spokenText) =>
-                  void regenerateEventFromPanel(id, description, spokenText)
-                }
-              />
-            ) : null}
-            <Inspector
-              asset={draftAsset ?? baseAsset}
-              video={video}
+    <div className="app">
+      <TopBar
+        hasAudio={video && baseAsset ? (baseAsset.has_audio ?? false) : null}
+        state={state}
+        submitError={dialogOpen ? null : submitError}
+        canGenerate={!!video}
+        onOpen={() => setDialogOpen(true)}
+        onGenerate={() => void submitGenerateAudio()}
+      />
+      <main className="wrap">
+        <section className="stage panel" aria-label="Video">
+          {video ? (
+            <Stage
               frame={selectedFrame}
-              timelineRows={timelineRows}
-              version={state.version}
+              highlightColor={highlightColor}
+              highlightLabel={highlightLabel}
+              highlightSceneTrackIds={highlightSceneTrackIds}
+              isPlaying={isPlaying}
+              maxFrame={maxFrame}
+              onSelectFrame={selectFrame}
+              onTogglePlay={togglePlayback}
+              onVideoPlayState={setIsPlaying}
+              onVideoSync={syncFrameFromVideo}
+              tracks={trackWindow?.tracks ?? []}
+              video={video}
+              videoRef={videoRef}
+              videoSrc={mp4Ready ? mp4Href : `/api/video?asset_version=${state.asset_version}`}
             />
-          </div>
-          <Timeline
-            rows={timelineRows}
-            soundTracks={soundTracks}
-            audioTracks={audioTrackArtifacts}
-            assetVersion={state.asset_version}
-            frame={selectedFrame}
-            frameCount={timelineFrameCount}
-            onEditSoundEvent={editSoundEventTimestamp}
-            onEditSoundEventDetails={startEditingSoundEventDetails}
-            onPlayTrackAudio={playTrackAudio}
-            onSelectFrame={selectFrame}
-            fps={fps}
-            selectedTrackId={selectedTrackId}
-            onSelectTrack={setSelectedTrackId}
-            soloTrackId={soloTrackId}
-            onToggleSolo={(id) => setSoloTrackId((current) => (current === id ? null : id))}
-            trackStatus={baseAsset?.track_status ?? {}}
-            appRunning={state.status === "running"}
-            trackColors={trackColors}
-          />
-          <p className="sr" role="status">
-            {selectedTrack ? `Selected: ${selectedTrack.label}` : ""}
-          </p>
-          </section>
+          ) : (
+            <div className="empty-video">Open a video to start</div>
+          )}
         </section>
-
-        {editingEventId && (() => {
-          const row = timelineRows.find((item) => item.sound_event_id === editingEventId);
-          if (!row) return null;
-          const soundEvent = draftAsset?.sound_timeline?.sound_events.find(
-            (item) => item.sound_event_id === editingEventId,
-          );
-          const soundTrack = soundTracks.find(
-            (item) => item.sound_track_id === row.sound_track_id,
-          );
-          const isSpeech = soundTrack?.track_type === "speech";
-          const regenerateReason = regenerateBlockedReason(hasTimelineEdits, state.status, state.stage);
-          const eventAudio = audioEventArtifacts.find((item) => item.sound_event_id === editingEventId);
-          return (
-            <div className="event-dialog-backdrop">
-              <form
-                aria-labelledby="edit-sound-event-title"
-                aria-modal="true"
-                className="event-dialog"
-                role="dialog"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const fd = new FormData(e.currentTarget);
-                  submitEditSoundEventDetails(
-                    editingEventId,
-                    String(fd.get("description") || ""),
-                    isSpeech ? String(fd.get("spoken_text") || "") : null,
-                  );
-                }}
-              >
-                <h3 id="edit-sound-event-title">Edit Sound Event</h3>
-                <label>
-                  <span>Acoustic description</span>
-                  <textarea name="description" defaultValue={row.label} rows={4} required />
-                </label>
-                {isSpeech ? (
-                  <label>
-                    <span>Spoken text</span>
-                    <textarea
-                      name="spoken_text"
-                      defaultValue={soundEvent?.spoken_text ?? ""}
-                      rows={3}
-                      required
-                    />
-                  </label>
-                ) : null}
-                {eventAudio ? (
-                  <div className="event-audio-actions">
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => playEventAudio(editingEventId, row.start_frame)}
-                    >
-                      Play event WAV
-                    </button>
-                    <a
-                      className="download-link"
-                      href={eventAudioUrl(editingEventId)}
-                      download
-                    >
-                      Download event WAV
-                    </a>
-                    <button
-                      type="button"
-                      className="secondary danger"
-                      disabled={state.status === "running"}
-                      onClick={() => void deleteSoundEventAudio(editingEventId)}
-                    >
-                      Delete event WAV
-                    </button>
-                  </div>
-                ) : null}
-                <label>
-                  <span>Inference server URL</span>
-                  <input name="server_url" type="url" placeholder="http://..." />
-                </label>
-                <div className="event-dialog-actions">
-                  <button type="button" className="secondary" onClick={() => setEditingEventId(null)}>Cancel</button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    disabled={regenerateReason !== null}
-                    onClick={(event) => {
-                      const form = event.currentTarget.form;
-                      if (form) {
-                        void regenerateSoundEventAudio(form, editingEventId, isSpeech);
-                      }
-                    }}
-                  >
-                    Regenerate Audio
-                  </button>
-                  <button type="submit">Save Changes</button>
-                </div>
-                {regenerateReason ? <p role="status" className="muted">{regenerateReason}</p> : null}
-              </form>
-            </div>
-          );
-        })()}
-
+        <Timeline
+          rows={timelineRows}
+          soundTracks={soundTracks}
+          audioTracks={audioTrackArtifacts}
+          assetVersion={state.asset_version}
+          frame={selectedFrame}
+          frameCount={timelineFrameCount}
+          onEditSoundEvent={editSoundEventTimestamp}
+          onPlayTrackAudio={playTrackAudio}
+          onSelectFrame={selectFrame}
+          fps={fps}
+          selectedTrackId={selectedTrackId}
+          onSelectTrack={setSelectedTrackId}
+          soloTrackId={soloTrackId}
+          onToggleSolo={(id) => setSoloTrackId((current) => (current === id ? null : id))}
+          trackStatus={baseAsset?.track_status ?? {}}
+          appRunning={state.status === "running"}
+          trackColors={trackColors}
+        />
+        {selectedTrack ? (
+          <SelectedTrackPanel
+            key={selectedTrack.sound_track_id}
+            track={selectedTrack}
+            artifact={audioTrackArtifacts.find((a) => a.sound_track_id === selectedTrack.sound_track_id)}
+            status={baseAsset?.track_status?.[selectedTrack.sound_track_id]}
+            appRunning={state.status === "running"}
+            blockedReason={regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)}
+            hasAudio={baseAsset?.has_audio ?? false}
+            residualEnabled={baseAsset?.residual_enabled ?? false}
+            objectColor={highlightColor}
+            onRegenerate={(method, description) =>
+              // App already reports the failure via submitError.
+              void Promise.resolve(onRegenerateTrack?.(selectedTrack.sound_track_id, method, description)).catch(() => {})
+            }
+            onSetResidual={(enabled) => void Promise.resolve(onSetResidual?.(enabled)).catch(() => {})}
+            events={(draftAsset?.sound_timeline?.sound_events ?? []).filter(
+              (event) => event.sound_track_id === selectedTrack.sound_track_id,
+            )}
+            onRegenerateEvent={(id, description, spokenText) =>
+              void regenerateEventFromPanel(id, description, spokenText)
+            }
+          />
+        ) : null}
+        <p className="sr" role="status">
+          {selectedTrack ? `Selected: ${selectedTrack.label}` : ""}
+        </p>
       </main>
+      <OpenVideoDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        running={state.status === "running"}
+        hasVideo={!!video}
+        error={submitError}
+        serverUrl={serverUrl}
+        onServerUrlChange={setServerUrl}
+        onSubmit={onSubmit}
+        onImport={onImport}
+        onClean={cleanWorkspace}
+        onResetSoundTimeline={onResetSoundTimeline}
+        canDownloadJson={!!draftAsset}
+        onDownloadJson={exportEditedAsset}
+        hasEdits={hasTimelineEdits}
+        onDiscardEdits={resetTimestampEdits}
+        videoDownloadHref={mp4Ready ? mp4Href : null}
+      />
+    </div>
   );
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
-}
-
-function countRows(rows: AssetResponse["timeline_rows"], kind: string): number {
-  return rows.filter((row) => row.kind === kind).length;
-}
-
-function isSoundRow(row: AssetResponse["timeline_rows"][number]): boolean {
-  return (
-    row.kind !== "scene" &&
-    row.kind !== "track" &&
-    !row.lane.startsWith("visual: ")
-  );
 }
 
 function inferFrameCount(rows: TimelineRow[]): number {
