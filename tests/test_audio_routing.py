@@ -176,10 +176,6 @@ class AudioRoutingTest(unittest.TestCase):
             self.assertIn("hunyuan 500", str(ctx.exception))
             self.assertFalse(out.exists())
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     @patch("v2a_inspect.audio_generation.client.get_settings")
     @patch("v2a_inspect.audio_generation.client.generate_speech_kokoro")
     @patch("v2a_inspect.audio_generation.client.generate_speech_elevenlabs")
@@ -233,3 +229,7 @@ if __name__ == "__main__":
 
             self.assertIn("V2A_INSPECT_TTS_PROVIDER=kokoro", str(ctx.exception))
             self.assertFalse(out.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
