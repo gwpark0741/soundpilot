@@ -113,6 +113,7 @@ class TrackPipelineTest(unittest.TestCase):
                 ["Door"],
                 original_audio_path=_write_sine(root / "orig.wav"),
                 has_audio=True,
+                audio_mode="separate",
             )
             with (
                 patch("v2a_inspect.ui.pipeline.separate_track", side_effect=_fake_stem),
@@ -161,15 +162,43 @@ class TrackPipelineTest(unittest.TestCase):
     def test_separate_without_original_audio_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            asset, tracks = _asset(root, "separate", ["Door"], original_audio_path=None)
+            asset, tracks = _asset(
+                root, "separate", ["Door"], original_audio_path=None, audio_mode="separate"
+            )
             snapshot = asyncio.run(_run(asset))
 
             self.assertEqual(snapshot.status, "failed")
-            status = snapshot.asset.track_status[tracks[0].sound_track_id]
-            self.assertEqual(status.state, "failed")
-            self.assertIn("생성으로 바꾸세요", status.error)
-            # Top bar gets short copy; the detail stays in the track status.
-            self.assertEqual(snapshot.error, "Door failed.")
+            self.assertEqual(snapshot.error, "No original audio to separate.")
+
+    def test_generation_applies_the_audio_mode_again(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            # A track replaced by hand ("selsync") goes back to the chosen mode.
+            asset, tracks = _asset(
+                root,
+                "selsync",
+                ["Door"],
+                original_audio_path=_write_sine(root / "orig.wav"),
+                has_audio=True,
+                audio_mode="separate",
+            )
+            with (
+                patch(
+                    "v2a_inspect.ui.pipeline.separate_track", side_effect=_fake_stem
+                ) as sep,
+                patch("v2a_inspect.ui.pipeline.generate_track") as gen,
+                patch(
+                    "v2a_inspect.ui.pipeline.mix_audio_into_video",
+                    side_effect=_fake_mix,
+                ),
+            ):
+                snapshot = asyncio.run(_run(asset))
+
+            self.assertEqual(snapshot.status, "complete")
+            sep.assert_called_once()
+            gen.assert_not_called()
+            (track,) = snapshot.asset.sound_timeline.sound_tracks
+            self.assertEqual((track.generation_model, track.agent_model), ("separate", "v2a"))
 
     def test_stem_only_asset_builds_preview(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

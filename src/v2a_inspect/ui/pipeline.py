@@ -286,6 +286,8 @@ async def run_audio_generation_pipeline(
     server_url: str | None,
 ) -> None:
     try:
+        # Hand-replaced tracks go back to the chosen mode before a full run.
+        video_asset = _apply_track_routing(video_asset)
         timeline = video_asset.sound_timeline
         if not timeline:
             raise ValueError("No sound timeline found in video asset.")

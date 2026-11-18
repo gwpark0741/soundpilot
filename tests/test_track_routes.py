@@ -155,6 +155,56 @@ class TrackRouteTest(unittest.TestCase):
             self.assertEqual(response.status_code, 422)
             p.assert_not_called()
 
+    def test_set_mode_conflict_and_missing_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, _ = _asset(Path(temp_dir))
+            busy, _ = self._client(asset, running=True)
+            self.assertEqual(
+                busy.post("/api/audio/mode", data={"mode": "generate"}).status_code, 409
+            )
+            empty, _ = self._client(None)
+            self.assertEqual(
+                empty.post("/api/audio/mode", data={"mode": "generate"}).status_code, 404
+            )
+
+    def test_set_mode_separate_without_audio_is_422_and_changes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, _ = _asset(Path(temp_dir), has_audio=False)
+            client, store = self._client(asset)
+            before = asyncio.run(store.snapshot())
+            response = client.post("/api/audio/mode", data={"mode": "separate"})
+            after = asyncio.run(store.snapshot())
+
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()["detail"], "No original audio to separate.")
+            self.assertEqual(after.asset_version, before.asset_version)
+            self.assertEqual(after.asset.audio_mode, "generate")
+            self.assertEqual(
+                [t.generation_model for t in after.asset.sound_timeline.sound_tracks],
+                ["selsync"],
+            )
+
+    def test_set_mode_routes_tracks_and_keeps_agent_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, track = _asset(Path(temp_dir), has_audio=True)
+            client, store = self._client(asset)
+
+            def tracks():
+                return asyncio.run(store.snapshot()).asset.sound_timeline.sound_tracks
+
+            response = client.post("/api/audio/mode", data={"mode": "separate"})
+            self.assertEqual(response.json(), {"status": "ok"})
+            snapshot = asyncio.run(store.snapshot())
+            self.assertEqual(snapshot.status, "complete")
+            self.assertEqual(snapshot.asset.audio_mode, "separate")
+            (routed,) = tracks()
+            self.assertEqual((routed.generation_model, routed.agent_model), ("separate", "v2a"))
+
+            client.post("/api/audio/mode", data={"mode": "generate"})
+            self.assertEqual(asyncio.run(store.snapshot()).asset.audio_mode, "generate")
+            (routed,) = tracks()
+            self.assertEqual((routed.generation_model, routed.agent_model), ("selsync", "v2a"))
+
     def test_residual_toggle_queues_and_guards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

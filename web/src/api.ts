@@ -148,6 +148,16 @@ export async function regenerateTrackAudio(
   }
 }
 
+export async function setAudioMode(mode: "generate" | "separate"): Promise<void> {
+  const formData = new FormData();
+  formData.append("mode", mode);
+  const response = await fetch("/api/audio/mode", { method: "POST", body: formData });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to set audio mode: ${response.status}`);
+  }
+}
+
 export async function setResidualEnabled(enabled: boolean): Promise<void> {
   const formData = new FormData();
   formData.append("enabled", String(enabled));

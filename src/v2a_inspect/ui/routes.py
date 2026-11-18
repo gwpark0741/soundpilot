@@ -14,7 +14,8 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import ValidationError
 
 from v2a_inspect.media_utils import probe_prepared_video
-from v2a_inspect.models import VideoAsset
+from v2a_inspect.audio_generation.routing import route_tracks
+from v2a_inspect.models import SoundTimeline, VideoAsset
 from v2a_inspect.preprocessing import prepare_video
 from v2a_inspect.preprocessing.video import extract_original_audio
 
@@ -236,6 +237,32 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             asset, stage="queued track audio regeneration"
         )
         return {"status": "queued"}
+
+    @router.post("/api/audio/mode")
+    async def set_audio_mode(
+        mode: Annotated[Literal["generate", "separate"], Form()],
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        timeline = asset.sound_timeline
+        try:
+            routed = route_tracks(
+                timeline or SoundTimeline(), mode=mode, has_audio=asset.has_audio
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        update: dict[str, object] = {"audio_mode": mode}
+        if timeline is not None:
+            update["sound_timeline"] = routed
+        # No background job follows, so finish the mutation (publish alone stays "running").
+        await store.set_complete_asset(
+            asset.model_copy(update=update), stage="changed audio mode"
+        )
+        return {"status": "ok"}
 
     @router.post("/api/audio/residual")
     async def set_residual_enabled(
