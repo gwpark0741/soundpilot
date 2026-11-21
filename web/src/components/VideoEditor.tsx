@@ -90,7 +90,7 @@ export default function VideoEditor({
   const audioCacheRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const animationRef = useRef<number | null>(null);
   const trackWindowRequestRef = useRef<string | null>(null);
-  const trackWindowAssetRef = useRef<number | null>(null);
+  const trackWindowAssetRef = useRef<{ assetVersion: number; trackingCount: number } | null>(null);
   const video = state.video;
   const fps = video?.fps || 30;
   const timelineFrameCount = Math.max(video?.frame_count ?? 0, inferFrameCount(timelineRows));
@@ -207,35 +207,37 @@ export default function VideoEditor({
     );
   }, [selectedTrackId, soundTracks]);
 
+  // Tracking rows are published mid-run without an asset_version bump, so their count is part of the key.
+  const trackingCount = state.timeline_rows.filter((row) => row.kind === "track").length;
   useEffect(() => {
-    if (!selectedTrackId || !video) {
+    if (!video || trackingCount === 0) {
       return;
     }
     const assetVersion = state.asset_version;
     const fetched =
-      trackWindow && trackWindowAssetRef.current !== null
-        ? { ...trackWindow, assetVersion: trackWindowAssetRef.current }
+      trackWindow && trackWindowAssetRef.current
+        ? { ...trackWindow, ...trackWindowAssetRef.current }
         : null;
-    if (!trackWindowNeedsFetch({ window: fetched, frame: selectedFrame, maxFrame, assetVersion })) {
+    if (!trackWindowNeedsFetch({ window: fetched, frame: selectedFrame, maxFrame, assetVersion, trackingCount })) {
       return;
     }
     const startFrame = Math.max(0, selectedFrame - 300);
     const endFrame = Math.min(maxFrame, selectedFrame + 300);
-    const requestKey = `${assetVersion}:${startFrame}:${endFrame}`;
+    const requestKey = `${assetVersion}:${trackingCount}:${startFrame}:${endFrame}`;
     if (trackWindowRequestRef.current === requestKey) {
       return;
     }
     trackWindowRequestRef.current = requestKey;
     void fetchTrackingWindow(startFrame, endFrame)
       .then((window) => {
-        trackWindowAssetRef.current = assetVersion;
+        trackWindowAssetRef.current = { assetVersion, trackingCount };
         setTrackWindow(window);
       })
       .catch(() => {
         // Allow a retry; a successful key stays so the same window is not requested twice.
         trackWindowRequestRef.current = null;
       });
-  }, [maxFrame, selectedFrame, selectedTrackId, state.asset_version, trackWindow, video]);
+  }, [maxFrame, selectedFrame, state.asset_version, trackingCount, trackWindow, video]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -598,6 +600,8 @@ export default function VideoEditor({
             <Stage
               frame={selectedFrame}
               highlightColor={highlightColor}
+              showAllObjects={!selectedTrack}
+              sceneTrackColors={objects.sceneTrackColors}
               highlightLabel={highlightLabel}
               highlightSceneTrackIds={highlightSceneTrackIds}
               isPlaying={isPlaying}
@@ -632,6 +636,7 @@ export default function VideoEditor({
           trackStatus={baseAsset?.track_status ?? {}}
           appRunning={state.status === "running"}
           trackColors={trackColors}
+          objectLanes={objects.lanes}
         />
         {selectedTrack ? (
           <SelectedTrackPanel

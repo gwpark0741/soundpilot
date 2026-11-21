@@ -145,6 +145,12 @@ h1, h2, h3, p { margin: 0; }
 .lh-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 20px; }
 @media (hover: hover) { .lh-main:hover { background: #2a2f3a; } }
 .lane.sel .lane-head { background: var(--raise); box-shadow: inset 4px 0 0 var(--oc); }
+.og-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 12px; background: transparent; border: 0; border-bottom: 1px solid var(--border); color: var(--muted); font: inherit; font-size: 0.8125rem; font-weight: 600; cursor: pointer; text-align: start; }
+.og-count { font-weight: 400; font-variant-numeric: tabular-nums; }
+.lane.obj .lane-head { padding-block: 2px; }
+.lane.obj .lh-name { padding-inline: 6px; font-size: 0.8125rem; }
+.lane.obj .lane-track { min-height: 26px; cursor: pointer; }
+.ob { position: absolute; top: 8px; bottom: 8px; min-width: 3px; border-radius: 3px; opacity: 0.85; }
 .lane-label-sp { border-inline-end: 1px solid var(--border); }
 .lane-track { position: relative; min-height: 52px; }
 .ruler .lane-track { height: 22px; min-height: 0; cursor: pointer; }

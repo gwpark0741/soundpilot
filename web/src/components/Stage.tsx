@@ -13,6 +13,9 @@ interface StageProps {
   tracks: TrackWindowTrack[];
   highlightSceneTrackIds: string[];
   highlightColor: string;
+  // No sound track selected: the overlay draws every tracked object in its own colour.
+  showAllObjects?: boolean;
+  sceneTrackColors?: Record<string, string>;
   // Source label, or the full "<source> has no object mask" text when there is nothing to highlight.
   highlightLabel: string | null;
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -33,6 +36,8 @@ export default function Stage({
   tracks,
   highlightSceneTrackIds,
   highlightColor,
+  showAllObjects = false,
+  sceneTrackColors = {},
   highlightLabel,
   videoRef,
   maxFrame = Math.max(0, video.frame_count - 1),
@@ -65,8 +70,9 @@ export default function Stage({
             video={video}
             tracks={tracks}
             frame={frame}
-            highlightSceneTrackIds={highlightSceneTrackIds}
+            highlightSceneTrackIds={showAllObjects ? null : highlightSceneTrackIds}
             highlightColor={highlightColor}
+            sceneTrackColors={sceneTrackColors}
           />
           {chipText ? (
             <p className="chip">

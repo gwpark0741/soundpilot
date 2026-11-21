@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, type CSSProperties, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import Icon, { STATUS_ICON } from "./Icon";
+import type { ObjectLane } from "../lib/objects";
 import { methodLabel, objectColor, statusView } from "../lib/selection";
 import type {
   AudioTrackArtifact,
@@ -29,6 +30,7 @@ interface TimelineProps {
   trackStatus?: Record<string, TrackStatus>;
   appRunning: boolean;
   trackColors?: Record<string, string>;
+  objectLanes?: ObjectLane[];
 }
 
 interface LaneGroup {
@@ -66,7 +68,11 @@ export default function Timeline({
   trackStatus = {},
   appRunning,
   trackColors = {},
+  objectLanes = [],
 }: TimelineProps) {
+  // null = automatic: open while running or before any sound lane exists; the toggle overrides.
+  const [objectsOpen, setObjectsOpen] = useState<boolean | null>(null);
+  const showObjects = objectsOpen ?? (appRunning || soundTracks.length === 0);
   const dragRef = useRef<ActiveDrag | null>(null);
   const audioByTrack = useMemo(
     () => new Map(audioTracks.map((item) => [item.sound_track_id, item])),
@@ -192,7 +198,50 @@ export default function Timeline({
           <span className="playhead" style={{ left: playheadLeft }} />
         </div>
       </div>
-      {lanes.length === 0 ? (
+      {objectLanes.length > 0 ? (
+        <>
+          <button
+            aria-expanded={showObjects}
+            className="og-toggle"
+            onClick={() => setObjectsOpen(!showObjects)}
+            type="button"
+          >
+            <span aria-hidden="true" className="og-caret">{showObjects ? "▾" : "▸"}</span>
+            Objects
+            <span className="og-count">{objectLanes.length}</span>
+          </button>
+          {showObjects
+            ? objectLanes.map((object) => (
+                <div className="lane obj" key={object.key}>
+                  <div className="lane-head">
+                    <span className="lh-name">
+                      <span aria-hidden="true" className="sw" style={{ background: object.color }} />
+                      {object.label}
+                    </span>
+                  </div>
+                  <div className="lane-track" onPointerDown={selectFrame}>
+                    {object.bars.map((bar, index) => {
+                      const style = barStyle(
+                        { ...bar, lane: object.key, label: object.label, kind: "track" },
+                        timelineEndFrame,
+                      );
+                      return (
+                        <span
+                          className="ob"
+                          key={`${bar.start_frame}-${bar.end_frame}-${index}`}
+                          style={{ left: `${style.left}%`, width: `${style.width}%`, background: object.color }}
+                          title={`${object.label}: ${bar.start_frame}-${bar.end_frame}`}
+                        />
+                      );
+                    })}
+                    <span className="playhead" style={{ left: playheadLeft }} />
+                  </div>
+                </div>
+              ))
+            : null}
+        </>
+      ) : null}
+      {lanes.length === 0 && objectLanes.length === 0 ? (
         <div className="empty-lane">Pipeline lanes will appear here.</div>
       ) : (
         lanes.map(({ soundTrack, audioTrack, rows: laneRows }) => {

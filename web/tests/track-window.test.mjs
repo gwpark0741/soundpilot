@@ -12,9 +12,9 @@ test("trackWindowNeedsFetch: edges clamped at 0/maxFrame count as covered", asyn
   const { trackWindowNeedsFetch } = await server.ssrLoadModule("/src/lib/trackWindow.ts");
 
   const maxFrame = 899;
-  const need = (window, frame, assetVersion = 1) =>
-    trackWindowNeedsFetch({ window, frame, maxFrame, assetVersion });
-  const win = (start_frame, end_frame, assetVersion = 1) => ({ start_frame, end_frame, assetVersion });
+  const need = (window, frame, assetVersion = 1, trackingCount = 3) =>
+    trackWindowNeedsFetch({ window, frame, maxFrame, assetVersion, trackingCount });
+  const win = (start_frame, end_frame, assetVersion = 1, trackingCount = 3) => ({ start_frame, end_frame, assetVersion, trackingCount });
 
   assert.equal(need(null, 0), true, "nothing fetched yet");
   // Frame 0: window [0, 300] is exactly what a fetch returns; it must not be refetched.
@@ -30,7 +30,9 @@ test("trackWindowNeedsFetch: edges clamped at 0/maxFrame count as covered", asyn
   assert.equal(need(win(200, 800), 250), true);
   assert.equal(need(win(200, 800), 760), true);
   // Short video: the window covers everything.
-  assert.equal(trackWindowNeedsFetch({ window: win(0, 40), frame: 20, maxFrame: 40, assetVersion: 1 }), false);
+  assert.equal(trackWindowNeedsFetch({ window: win(0, 40), frame: 20, maxFrame: 40, assetVersion: 1, trackingCount: 3 }), false);
   // Asset version change refetches, even at frame 0.
   assert.equal(need(win(0, 300, 1), 0, 2), true);
+  // Tracking rows arriving mid-run (same asset_version) refetch too.
+  assert.equal(need(win(0, 300, 1, 0), 0, 1, 3), true);
 });
