@@ -68,6 +68,8 @@ Generate 모드에서 track별 모델은 다음 순서로 정해진다 (`audio_g
 | 그 외, agent가 영상 동기 SFX(v2a)를 고른 track | SelVA w/ SelSync (track당 stem 1개) |
 | 그 외 | agent가 고른 모델 |
 
+agent는 화면에 보이는 물체가 내고 타이밍이 동작에 맞아야 하는 소리(타격, 발소리, 휘두르기, 옷·갑옷 움직임 등)를 v2a로 고르고, ambience, 화면 밖 소리, 숨소리·기합 같은 비언어 음성만 t2a로 고른다 (`prompts/files/system/sound_timeline_agent.txt`).
+
 Separate 모드에서는 모든 track이 분리(SAM Audio) 대상이다. ElevenLabs TTS는 현재 plan에서 기본 voice가 402(`paid_plan_required`)로 막혀 보류 중이다.
 
 ## 5. 주요 환경 변수
