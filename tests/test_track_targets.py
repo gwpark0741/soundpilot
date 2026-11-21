@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from v2a_inspect.models import (
+    SoundEvent,
     SoundSource,
     SoundTimeline,
     SoundTrack,
@@ -15,7 +16,7 @@ from v2a_inspect.models import (
     VisualPresence,
 )
 from v2a_inspect.ui.routes import _summary_payload
-from v2a_inspect.ui.rows import track_highlight_targets
+from v2a_inspect.ui.rows import track_highlight, track_highlight_targets
 from v2a_inspect.ui.store import VideoAssetSnapshot
 
 SAMPLE = Path(__file__).parent.parent / "samples" / "sample.video-asset.json"
@@ -50,7 +51,66 @@ def _asset(
     return asset, track
 
 
+def _obj(label: str, start: int, end: int) -> tuple[VisualObject, str]:
+    sid = uuid4()
+    presence = VisualPresence(
+        start_frame_index=start,
+        end_frame_index=end,
+        state="visible",
+        scene_track_id=sid,
+    )
+    return VisualObject(label=label, presences=[presence]), str(sid)
+
+
 class TrackTargetsTest(unittest.TestCase):
+    def test_same_label_union_across_scenes(self) -> None:
+        a, a_id = _obj("black samurai", 0, 60)
+        b, b_id = _obj("Black Samurai ", 215, 253)
+        source = SoundSource(
+            source_type="visual_object",
+            label="Samurai",
+            visual_object_id=a.visual_object_id,
+        )
+        asset, track = _asset(source, [a, b])
+
+        targets, fallbacks = track_highlight(asset)
+
+        self.assertEqual(targets[str(track.sound_track_id)], [a_id, b_id])
+        self.assertEqual(fallbacks[str(track.sound_track_id)], [])
+
+    def test_head_noun_fallback_per_event(self) -> None:
+        red, red_id = _obj("red samurai sword", 145, 187)
+        sword, sword_id = _obj("sword", 193, 240)
+        shield, _ = _obj("shield", 193, 240)
+        far_sword, _ = _obj("sword", 300, 320)
+        source = SoundSource(
+            source_type="visual_object",
+            label="Sword",
+            visual_object_id=red.visual_object_id,
+        )
+        asset, track = _asset(source, [red, sword, shield, far_sword])
+        for start, end in [(168, 187), (193, 239)]:
+            asset.sound_timeline.sound_events.append(
+                SoundEvent(
+                    sound_track_id=track.sound_track_id,
+                    start_frame_index=start,
+                    end_frame_index=end,
+                    description="x",
+                )
+            )
+
+        targets, fallbacks = track_highlight(asset)
+        key = str(track.sound_track_id)
+
+        self.assertEqual(targets[key], [red_id, sword_id])
+        self.assertEqual(fallbacks[key], [sword_id])
+
+        # Event 1 alone overlaps an A presence: no fallback at all.
+        asset.sound_timeline.sound_events.pop()
+        targets, fallbacks = track_highlight(asset)
+        self.assertEqual(targets[key], [red_id])
+        self.assertEqual(fallbacks[key], [])
+
     def test_targets_by_visual_object_id(self) -> None:
         scene_track = uuid4()
         obj = VisualObject(
@@ -129,6 +189,7 @@ class TrackTargetsTest(unittest.TestCase):
         self.assertEqual(
             _summary_payload(snapshot)["track_targets"], track_highlight_targets(asset)
         )
+        self.assertIn("track_target_fallbacks", _summary_payload(snapshot))
         empty = VideoAssetSnapshot(**{**snapshot.__dict__, "asset": None})
         self.assertEqual(_summary_payload(empty)["track_targets"], {})
 

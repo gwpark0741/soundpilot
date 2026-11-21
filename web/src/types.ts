@@ -16,6 +16,7 @@ export interface AssetResponse {
   audio_tracks: AudioTrackArtifact[];
   audio_events: AudioEventArtifact[];
   track_targets: Record<string, string[]>;
+  track_target_fallbacks: Record<string, string[]>;
 }
 
 export interface FullAssetResponse extends AssetResponse {

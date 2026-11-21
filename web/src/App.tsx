@@ -28,6 +28,7 @@ const emptyAsset: AssetResponse = {
   audio_tracks: [],
   audio_events: [],
   track_targets: {},
+  track_target_fallbacks: {},
 };
 
 export default function App() {

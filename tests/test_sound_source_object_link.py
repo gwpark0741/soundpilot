@@ -70,7 +70,7 @@ class SourceObjectLinkTest(unittest.TestCase):
         )
         self.assertEqual(args.visual_object_label, "player character #2")
 
-    def test_upsert_links_object_and_highlights_exactly_one_track(self) -> None:
+    def test_upsert_links_object_and_highlights_same_label_tracks(self) -> None:
         asset = _asset()
         editor = SoundTimelineEditor(asset)
         second = asset.visual_identity_layer.visual_objects[1]
@@ -90,7 +90,14 @@ class SourceObjectLinkTest(unittest.TestCase):
 
         self.assertEqual(source.visual_object_id, second.visual_object_id)
         targets = track_highlight_targets(asset)[str(track.sound_track_id)]
-        self.assertEqual(targets, [str(second.presences[0].scene_track_id)])
+        same = [
+            o
+            for o in asset.visual_identity_layer.visual_objects
+            if o.label == second.label
+        ]
+        self.assertEqual(
+            targets, [str(p.scene_track_id) for o in same for p in o.presences]
+        )
 
     def test_upsert_bad_label_raises_and_writes_nothing(self) -> None:
         editor = SoundTimelineEditor(_asset())

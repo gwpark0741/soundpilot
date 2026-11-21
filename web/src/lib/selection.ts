@@ -1,4 +1,4 @@
-import type { GenerationModel, SoundTrack, TrackStatus } from "../types";
+import type { GenerationModel, SoundTrack, TrackStatus, TrackWindowTrack } from "../types";
 
 // The first two follow the approved mockup (--c-player, --c-enemy); the rest are vivid and distinct on video.
 const OBJECT_COLORS = ["#4cc9f0", "#ff7ab6", "#ffd166", "#9be564", "#ff8c42", "#b388ff", "#ff4d4d", "#2ec4b6"];
@@ -11,6 +11,19 @@ export function objectColor(index: number): string {
 
 export function highlightFor(trackId: string | null, targets: Record<string, string[]>): string[] {
   return (trackId && targets[trackId]) || [];
+}
+
+// Label of the scene track drawn at `frame` when every drawn highlight comes from name-matched fallbacks.
+export function fallbackMatchLabel(
+  tracks: TrackWindowTrack[],
+  frame: number,
+  highlightIds: string[],
+  fallbackIds: string[],
+): string | null {
+  const drawn = tracks.filter(
+    (t) => highlightIds.includes(t.scene_track_id) && t.points.some((p) => p.frame_index === frame),
+  );
+  return drawn.length > 0 && drawn.every((t) => fallbackIds.includes(t.scene_track_id)) ? drawn[0].label : null;
 }
 
 export function methodLabel(

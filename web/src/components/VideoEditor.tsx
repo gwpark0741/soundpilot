@@ -7,7 +7,7 @@ import TopBar from "./TopBar";
 import { fetchAssetForExport, fetchTrackingWindow } from "../api";
 import { buildObjects } from "../lib/objects";
 import { trackWindowNeedsFetch } from "../lib/trackWindow";
-import { highlightFor, objectColor, reconcileSelection, soloToggleAction, transportAction } from "../lib/selection";
+import { fallbackMatchLabel, highlightFor, objectColor, reconcileSelection, soloToggleAction, transportAction } from "../lib/selection";
 import type {
   AssetResponse,
   AudioTrackArtifact,
@@ -112,9 +112,17 @@ export default function VideoEditor({
   const selectedSourceLabel = soundSources?.find(
     (source) => source.sound_source_id === selectedTrack?.sound_source_id,
   )?.label;
+  const matchedByName = fallbackMatchLabel(
+    trackWindow?.tracks ?? [],
+    selectedFrame,
+    highlightSceneTrackIds,
+    (selectedTrackId && state.track_target_fallbacks?.[selectedTrackId]) || [],
+  );
   const highlightLabel = selectedTrack
     ? highlightSceneTrackIds.length > 0
-      ? (selectedSourceLabel ?? selectedTrack.label)
+      ? matchedByName
+        ? `${matchedByName} (matched by name)`
+        : (selectedSourceLabel ?? selectedTrack.label)
       : `${selectedSourceLabel ?? selectedTrack.label} has no object mask`
     : null;
   const audioTrackArtifacts = useMemo<AudioTrackArtifact[]>(

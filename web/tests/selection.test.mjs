@@ -17,6 +17,11 @@ test("selection helpers", async (context) => {
     assert.deepEqual(s.trackActions(model, true, "sfx"), ["regenerate", "re-separate"]);
   }
   assert.deepEqual(s.trackActions("tts", true, "speech"), ["regenerate", "re-separate"]);
+  const tr = (id, label, frames) => ({ scene_track_id: id, label, points: frames.map((f) => ({ frame_index: f })) });
+  const win = [tr("a", "red samurai sword", [1]), tr("b", "sword", [5])];
+  assert.equal(s.fallbackMatchLabel(win, 5, ["a", "b"], ["b"]), "sword");
+  assert.equal(s.fallbackMatchLabel(win, 1, ["a", "b"], ["b"]), null);
+  assert.equal(s.fallbackMatchLabel(win, 9, ["a", "b"], ["b"]), null);
   assert.equal(s.actionMethod("re-separate"), "separate");
   assert.equal(s.actionMethod("generate-instead"), "generate");
   assert.equal(s.actionMethod("regenerate"), "generate");

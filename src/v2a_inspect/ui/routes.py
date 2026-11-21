@@ -35,6 +35,7 @@ from .pipeline import (
 from .rows import (
     current_frame_rows,
     timeline_rows,
+    track_highlight_fallbacks,
     track_highlight_targets,
     tracking_window_rows,
 )
@@ -650,6 +651,9 @@ def _summary_payload(snapshot: VideoAssetSnapshot) -> dict[str, object]:
             item.model_dump(mode="json") for item in asset.sound_event_audio_artifacts
         ],
         "track_targets": {} if asset is None else track_highlight_targets(asset),
+        "track_target_fallbacks": {}
+        if asset is None
+        else track_highlight_fallbacks(asset),
     }
 
 
