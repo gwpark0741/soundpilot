@@ -162,6 +162,24 @@ export default function VideoEditor({
     };
   }, [state.timeline_rows, state.version]);
 
+  // A new run clears the asset (and a new video replaces it): drop everything tied to the old project,
+  // or a stale "unsaved edits" flag would freeze the refresh above.
+  const videoId = video?.video_id;
+  useEffect(() => {
+    stopPreviewAudio(true);
+    setFrame(0);
+    setSelectedTrackId(null);
+    setSoloTrackId(null);
+    setTrackWindow(null);
+    trackWindowRequestRef.current = null;
+    trackWindowAssetRef.current = null;
+    setTimelineRows(state.timeline_rows);
+    setBaseAsset(null);
+    setDraftAsset(null);
+    setHasTimelineEdits(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoId]);
+
   useEffect(() => {
     return () => {
       stopPreviewAudio(true);
@@ -440,6 +458,10 @@ export default function VideoEditor({
     (soundEventId: string, startFrame: number, endFrame: number) => {
       const nextStart = clamp(startFrame, 0, Math.max(0, maxFrame));
       const nextEnd = clamp(endFrame, nextStart + 1, timelineFrameCount || 1);
+      const current = timelineRows.find((row) => row.sound_event_id === soundEventId);
+      if (current && current.start_frame === nextStart && current.end_frame === nextEnd) {
+        return;
+      }
       setTimelineRows((currentRows) =>
         currentRows.map((row) => {
           if (row.sound_event_id !== soundEventId) {
@@ -463,7 +485,7 @@ export default function VideoEditor({
       );
       setHasTimelineEdits(true);
     },
-    [maxFrame, timelineFrameCount],
+    [maxFrame, timelineFrameCount, timelineRows],
   );
 
   function resetTimestampEdits() {

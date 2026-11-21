@@ -382,6 +382,8 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             store,
             options,
         )
+        # Drop the previous project from the UI right away (files stay on disk).
+        await store.clear()
         await store.set_running(stage="queued")
         return {"status": "queued"}
 
