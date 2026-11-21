@@ -71,6 +71,9 @@ range except global source/track catalog searches.
   or broad "fighting sounds".
 - Longer ranges are only for continuous ambience, speech, sustained
   scrape, or continuous movement.
+- Do not split ambience at scene cuts. If the same sound bed continues across
+  consecutive scenes in your assigned frames, write one event spanning them;
+  start a new event only where the place or sound bed actually changes.
 - Source types: `scene_global` ambience, `offscreen_unknown` implied/offscreen
   diegetic, `non_diegetic` narration/voice-over.
 - Use short notes for evidence/rationale. If uncertain after bounded evidence,
