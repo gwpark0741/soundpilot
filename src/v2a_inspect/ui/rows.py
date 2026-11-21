@@ -230,6 +230,7 @@ def timeline_rows(video_asset: VideoAsset) -> list[TableRow]:
             {
                 "lane": "tracking",
                 "label": row["label"],
+                "scene_track_id": row["scene_track_id"],
                 "start_frame": row["start_frame"],
                 "end_frame": row["end_frame"],
                 "kind": "track",

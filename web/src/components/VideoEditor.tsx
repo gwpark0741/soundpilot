@@ -5,6 +5,7 @@ import SelectedTrackPanel from "./SelectedTrackPanel";
 import Stage from "./Stage";
 import TopBar from "./TopBar";
 import { fetchAssetForExport, fetchTrackingWindow } from "../api";
+import { buildObjects } from "../lib/objects";
 import { trackWindowNeedsFetch } from "../lib/trackWindow";
 import { highlightFor, objectColor, reconcileSelection, soloToggleAction, transportAction } from "../lib/selection";
 import type {
@@ -102,23 +103,10 @@ export default function VideoEditor({
   const soundSources = draftAsset?.sound_timeline?.sound_sources;
   const selectedTrack = soundTracks.find((track) => track.sound_track_id === selectedTrackId);
   const highlightSceneTrackIds = highlightFor(selectedTrackId, state.track_targets);
-  // Colour index counts only sources that have an object mask, in source order.
-  const maskedSourceIds = (soundSources ?? [])
-    .map((source) => source.sound_source_id)
-    .filter((id) =>
-      soundTracks.some(
-        (track) =>
-          track.sound_source_id === id &&
-          highlightFor(track.sound_track_id, state.track_targets).length > 0,
-      ),
-    );
+  const objects = useMemo(() => buildObjects(timelineRows, draftAsset), [timelineRows, draftAsset]);
   const trackColors: Record<string, string> = {};
   for (const track of soundTracks) {
-    trackColors[track.sound_track_id] = objectColor(
-      highlightFor(track.sound_track_id, state.track_targets).length > 0 && track.sound_source_id
-        ? maskedSourceIds.indexOf(track.sound_source_id)
-        : -1,
-    );
+    trackColors[track.sound_track_id] = objects.soundTrackColor(track, state.track_targets);
   }
   const highlightColor = (selectedTrackId && trackColors[selectedTrackId]) || objectColor(-1);
   const selectedSourceLabel = soundSources?.find(

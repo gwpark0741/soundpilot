@@ -36,7 +36,8 @@ test("selection helpers", async (context) => {
   assert.equal(s.objectColor(0), "#4cc9f0");
   assert.equal(s.objectColor(1), "#ff7ab6");
   assert.equal(s.objectColor(-1), "#9aa3b2");
-  assert.equal(s.objectColor(99), "#9aa3b2");
+  assert.equal(s.objectColor(8), "#4cc9f0", "palette cycles");
+  for (let i = 0; i < 40; i++) assert.notEqual(s.objectColor(i), s.NONE_COLOR);
 
   assert.equal(s.methodLabel("separate"), "Separated");
   assert.equal(s.methodLabel("selsync"), "SelVA w/ SelSync");

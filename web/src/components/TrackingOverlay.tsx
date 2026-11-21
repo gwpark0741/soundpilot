@@ -16,7 +16,7 @@ const SOURCE_WIDTH = 1280;
 const SOURCE_HEIGHT = 720;
 // Masks are rasterized at half the 1280x720 source size: enough for a smooth outline,
 // a quarter of the per-frame pixel work.
-const MASK_FILL_ALPHA = 0.3;
+const MASK_FILL_ALPHA = 0.4;
 const MASK_W = 640;
 const MASK_H = 360;
 

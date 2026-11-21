@@ -199,6 +199,7 @@ export interface TimelineRow {
   kind: string;
   sound_event_id?: string;
   sound_track_id?: string;
+  scene_track_id?: string;
   generation_model?: GenerationModel;
   spoken_text?: string | null;
 }

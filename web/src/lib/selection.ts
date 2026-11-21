@@ -1,11 +1,12 @@
 import type { GenerationModel, SoundTrack, TrackStatus } from "../types";
 
-// Order follows the approved mockup (--c-player, --c-enemy, --c-none).
-const OBJECT_COLORS = ["#4cc9f0", "#ff7ab6"];
-const NONE_COLOR = "#9aa3b2";
+// The first two follow the approved mockup (--c-player, --c-enemy); the rest are vivid and distinct on video.
+const OBJECT_COLORS = ["#4cc9f0", "#ff7ab6", "#ffd166", "#9be564", "#ff8c42", "#b388ff", "#ff4d4d", "#2ec4b6"];
+export const NONE_COLOR = "#9aa3b2";
 
+// Masked objects cycle through the palette (never gray); a negative index means "no mask".
 export function objectColor(index: number): string {
-  return OBJECT_COLORS[index] ?? NONE_COLOR;
+  return index < 0 ? NONE_COLOR : OBJECT_COLORS[index % OBJECT_COLORS.length];
 }
 
 export function highlightFor(trackId: string | null, targets: Record<string, string[]>): string[] {
