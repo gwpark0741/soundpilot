@@ -409,6 +409,52 @@ class TrackPipelineTest(unittest.TestCase):
             self.assertEqual(only.origin, "separated")
             self.assertEqual(rebuilt.sound_event_audio_artifacts, [])
 
+    def test_silent_selsync_stem_falls_back_to_t2a(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, (door, clash) = _asset(root, "selsync", ["Door", "Clash"])
+
+            def stem(_video, plan, _seed, out_path):
+                if plan["name"] == "Clash":  # SelSync left the event silent
+                    wavfile.write(out_path, 48000, np.zeros(48000, dtype=np.int16))
+                    return out_path
+                return _write_sine(out_path)
+
+            with (
+                patch("v2a_inspect.ui.pipeline.generate_track", side_effect=stem),
+                patch(
+                    "v2a_inspect.ui.pipeline.generate_audio_for_item",
+                    side_effect=lambda **kw: str(_write_sine(Path(kw["out_path"]))),
+                ) as t2a,
+                patch(
+                    "v2a_inspect.ui.pipeline._convert_audio_to_wav",
+                    side_effect=lambda src, dst: Path(shutil.copy(src, dst)),
+                ),
+                patch(
+                    "v2a_inspect.ui.pipeline.mix_audio_into_video",
+                    side_effect=_fake_mix,
+                ),
+            ):
+                snapshot = asyncio.run(_run(asset))
+
+            self.assertEqual(snapshot.status, "complete")
+            origins = {
+                s.sound_track_id: s.origin
+                for s in snapshot.asset.sound_track_audio_artifacts
+            }
+            self.assertEqual(origins[door.sound_track_id], "generated")
+            self.assertEqual(origins[clash.sound_track_id], "mixed")  # from t2a events
+            self.assertEqual(t2a.call_count, 1)
+            self.assertEqual(t2a.call_args.kwargs["generation_model"], "t2a")
+            events = snapshot.asset.sound_event_audio_artifacts
+            self.assertEqual([e.sound_track_id for e in events], [clash.sound_track_id])
+            routed = {
+                t.sound_track_id: t.generation_model
+                for t in snapshot.asset.sound_timeline.sound_tracks
+            }
+            self.assertEqual(routed[clash.sound_track_id], "t2a")
+            self.assertEqual(snapshot.asset.track_status[clash.sound_track_id].state, "done")
+
     def test_event_level_track_failure_is_reported_in_track_status(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

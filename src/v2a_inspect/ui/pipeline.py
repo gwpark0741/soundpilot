@@ -326,33 +326,10 @@ async def run_audio_generation_pipeline(
         event_dir.mkdir(parents=True, exist_ok=True)
         track_dir.mkdir(parents=True, exist_ok=True)
 
-        audio_plan = build_audio_plan(
-            timeline,
-            fps=fps,
-            total_duration=video_duration,
-        )
-        item_context = _audio_item_context(timeline, audio_plan)
-        event_items = [
-            item
-            for item in audio_plan.items
-            if item.generation_model not in _TRACK_LEVEL_MODELS
-        ]
-
-        video_id: str | None = None
-        if any(item.generation_model == "v2a" for item in event_items):
-            await store.touch(stage="uploading video for V2A generation")
-            async with VideoClient(base_url=server_url) as video_client:
-                try:
-                    res = await video_client.upload(str(video_asset.source_path))
-                    video_id = res.video_id
-                except Exception:
-                    pass
-
-        n_items = len(event_items)
-
         event_artifacts: list[SoundEventAudioArtifact] = []
         track_artifacts: list[SoundTrackAudioArtifact] = []
         failed_labels: list[str] = []
+        silent_track_ids: set[UUID] = set()
 
         for track in timeline.sound_tracks:
             method = track.generation_model
@@ -379,6 +356,10 @@ async def run_audio_generation_pipeline(
                 if track_id in previous_stems:
                     track_artifacts.append(previous_stems[track_id])
             else:
+                if method == "selsync" and _silent_in_events(artifact.path, events, fps):
+                    # SelSync placed no sound inside the agent's events: use t2a instead.
+                    silent_track_ids.add(track_id)
+                    continue
                 track_artifacts.append(artifact)
                 if method == "separate":
                     video_asset = video_asset.model_copy(
@@ -391,6 +372,43 @@ async def run_audio_generation_pipeline(
                     )
                 status = TrackStatus(state="done")
             video_asset = await _set_track_status(video_asset, store, track_id, status)
+
+        if silent_track_ids:
+            timeline = timeline.model_copy(
+                update={
+                    "sound_tracks": [
+                        t.model_copy(update={"generation_model": "t2a"})
+                        if t.sound_track_id in silent_track_ids
+                        else t
+                        for t in timeline.sound_tracks
+                    ]
+                }
+            )
+            video_asset = video_asset.model_copy(update={"sound_timeline": timeline})
+
+        audio_plan = build_audio_plan(
+            timeline,
+            fps=fps,
+            total_duration=video_duration,
+        )
+        item_context = _audio_item_context(timeline, audio_plan)
+        event_items = [
+            item
+            for item in audio_plan.items
+            if item.generation_model not in _TRACK_LEVEL_MODELS
+        ]
+
+        video_id: str | None = None
+        if any(item.generation_model == "v2a" for item in event_items):
+            await store.touch(stage="uploading video for V2A generation")
+            async with VideoClient(base_url=server_url) as video_client:
+                try:
+                    res = await video_client.upload(str(video_asset.source_path))
+                    video_id = res.video_id
+                except Exception:
+                    pass
+
+        n_items = len(event_items)
 
         event_track_failures: dict[UUID, str] = {}
         for i, item in enumerate(event_items, 1):
@@ -1165,6 +1183,34 @@ def _convert_audio_to_wav(input_path: Path, output_path: Path) -> Path | None:
         return output_path
     except Exception:
         return None
+
+
+# Quietest per-frame peak inside the events that still counts as audible; the samurai
+# clip's missed sword stems peak at -78 to -42 dB, its audible armor stem at -26 dB.
+SELSYNC_SILENCE_DB = -35.0
+
+
+def _silent_in_events(path: Path, events: list[SoundEvent], fps: float) -> bool:
+    """True when no 1/fps window inside the events reaches SELSYNC_SILENCE_DB."""
+    if not events:
+        return False
+    try:
+        sample_rate, data = wavfile.read(path)
+    except Exception:
+        return False
+    samples = data.astype(np.float32)
+    if np.issubdtype(data.dtype, np.integer):
+        samples /= np.iinfo(data.dtype).max
+    if samples.ndim > 1:
+        samples = samples.mean(axis=1)
+    hop = max(1, round(sample_rate / fps))
+    for event in events:
+        seg = samples[event.start_frame_index * hop : (event.end_frame_index + 1) * hop]
+        for start in range(0, len(seg), hop):
+            rms = float(np.sqrt(np.mean(seg[start : start + hop] ** 2)))
+            if 20 * np.log10(rms + 1e-9) >= SELSYNC_SILENCE_DB:
+                return False
+    return True
 
 
 def _waveform_peaks(path: Path, *, bucket_count: int = 768) -> list[float]:
