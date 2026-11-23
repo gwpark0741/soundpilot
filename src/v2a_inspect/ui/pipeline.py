@@ -37,6 +37,7 @@ from v2a_inspect.audio_generation.audyssey import (
     track_description,
 )
 from v2a_inspect.audio_generation.client import generate_audio_for_item
+from v2a_inspect.audio_generation.clip import render_clip_wav, resolve_clip
 from v2a_inspect.audio_generation.plan import build_audio_plan
 from v2a_inspect.audio_generation.residual import compute_residual
 from v2a_inspect.audio_generation.routing import (
@@ -65,6 +66,7 @@ from v2a_inspect.preprocessing import (
 )
 
 from .store import VideoAssetStore
+from .track_edit import delete_track, reset_clips
 
 
 @dataclass(frozen=True)
@@ -306,6 +308,9 @@ async def run_audio_generation_pipeline(
             t.generation_model in _TRACK_LEVEL_MODELS for t in timeline.sound_tracks
         ):
             raise ValueError("No audio items to generate.")
+        # The audio changes, so every trim/move is dropped.
+        timeline = reset_clips(timeline)
+        video_asset = video_asset.model_copy(update={"sound_timeline": timeline})
 
         previous_stems = {
             a.sound_track_id: a
@@ -739,7 +744,10 @@ async def run_track_regeneration_pipeline(
         separated = dict(video_asset.separated_stem_paths)
         if route == "separate":
             separated[track_id] = new_stems[0].path
-        video_asset = video_asset.model_copy(update={"separated_stem_paths": separated})
+        timeline = reset_clips(timeline, {track_id})  # new audio: drop the old trim/move
+        video_asset = video_asset.model_copy(
+            update={"separated_stem_paths": separated, "sound_timeline": timeline}
+        )
         video_asset = await _refresh_residual(video_asset)
         video_asset = await _set_track_status(
             video_asset, store, track_id, TrackStatus(state="done")
@@ -789,6 +797,73 @@ async def run_residual_toggle_pipeline(
     except Exception:  # noqa: BLE001 - UI needs stage-specific failure text.
         logging.getLogger(__name__).exception("Residual toggle failed")
         await store.set_error("Could not change the rest of original audio.")
+
+
+async def run_track_clip_pipeline(
+    video_asset: VideoAsset,
+    store: VideoAssetStore,
+) -> None:
+    """Re-render the preview after a track's clip fields changed (no regeneration)."""
+    try:
+        timeline = video_asset.sound_timeline
+        if timeline is None:
+            raise ValueError("No sound timeline found in video asset.")
+        await store.set_running(stage="mixing audio")
+        audio_plan = build_audio_plan(
+            timeline, fps=video_asset.fps, total_duration=video_asset.duration_sec
+        )
+        video_asset = await _rebuild_audio_outputs(
+            video_asset, audio_plan, video_asset.sound_event_audio_artifacts, store
+        )
+        await store.set_complete_asset(video_asset, stage="Updated track audio.")
+    except Exception:  # noqa: BLE001 - UI needs stage-specific failure text.
+        logging.getLogger(__name__).exception("Track clip update failed")
+        await store.set_error("Could not update the track audio.")
+
+
+async def run_track_delete_pipeline(
+    video_asset: VideoAsset,
+    store: VideoAssetStore,
+    sound_track_id: str,
+) -> None:
+    try:
+        track_id = UUID(sound_track_id)
+        doomed = [
+            p
+            for a in video_asset.sound_track_audio_artifacts
+            if a.sound_track_id == track_id
+            for p in (a.path, a.clip_path)
+            if p is not None
+        ] + [
+            a.path
+            for a in video_asset.sound_event_audio_artifacts
+            if a.sound_track_id == track_id
+        ]
+        had_stem = track_id in video_asset.separated_stem_paths
+        await store.set_running(stage="removing track")
+        video_asset = delete_track(video_asset, track_id)
+        if had_stem:
+            video_asset = (
+                await _refresh_residual(video_asset)
+                if video_asset.separated_stem_paths
+                else video_asset.model_copy(
+                    update={"residual_path": None, "residual_enabled": False}
+                )
+            )
+        audio_plan = build_audio_plan(
+            video_asset.sound_timeline,
+            fps=video_asset.fps,
+            total_duration=video_asset.duration_sec,
+        )
+        video_asset = await _rebuild_audio_outputs(
+            video_asset, audio_plan, video_asset.sound_event_audio_artifacts, store
+        )
+        await store.set_complete_asset(video_asset, stage="Removed track.")
+        for path in doomed:
+            path.unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001 - UI needs stage-specific failure text.
+        logging.getLogger(__name__).exception("Track delete failed")
+        await store.set_error("Could not remove the track.")
 
 
 async def run_separation_planning_pipeline(
@@ -1063,7 +1138,13 @@ async def _rebuild_audio_outputs(
             )
         )
 
-    track_artifacts = mixed_artifacts + stem_artifacts
+    tracks_by_id = {t.sound_track_id: t for t in timeline.sound_tracks}
+    track_artifacts = [
+        await asyncio.to_thread(
+            _with_clip, a, tracks_by_id[a.sound_track_id], video_duration
+        )
+        for a in mixed_artifacts + stem_artifacts
+    ]
     if not track_artifacts:
         return video_asset.model_copy(
             update={
@@ -1089,7 +1170,7 @@ async def _rebuild_audio_outputs(
                 generation_model="stem",
             )
         )
-        preview_audio[item_id] = str(artifact.path)
+        preview_audio[item_id] = str(artifact.playback_path)
     if (
         video_asset.residual_enabled
         and video_asset.residual_path
@@ -1126,6 +1207,26 @@ async def _rebuild_audio_outputs(
             "sound_track_audio_artifacts": track_artifacts,
         }
     )
+
+
+def _with_clip(
+    artifact: SoundTrackAudioArtifact, track: SoundTrack, video_duration: float
+) -> SoundTrackAudioArtifact:
+    """Attach the video-length WAV with the track's trim/move applied (or drop a stale one)."""
+    out = artifact.path.with_name(f"{artifact.path.stem}.clip.wav")
+    if not track.has_clip:
+        out.unlink(missing_ok=True)
+        return artifact.model_copy(update={"clip_path": None})
+    start, end, offset = resolve_clip(track, artifact.duration_sec)
+    render_clip_wav(
+        artifact.path,
+        out,
+        start=start,
+        end=end,
+        offset=offset,
+        video_duration=video_duration,
+    )
+    return artifact.model_copy(update={"clip_path": out})
 
 
 def _audio_item_context(

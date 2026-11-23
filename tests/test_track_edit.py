@@ -1,0 +1,532 @@
+from __future__ import annotations
+
+import asyncio
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+from uuid import uuid4
+
+import numpy as np
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from scipy.io import wavfile
+
+from v2a_inspect.audio_generation.clip import (
+    MIN_CLIP_SEC,
+    clamp_clip,
+    render_clip_wav,
+)
+from v2a_inspect.models import (
+    SoundEvent,
+    SoundEventAudioArtifact,
+    SoundSource,
+    SoundTimeline,
+    SoundTrack,
+    SoundTrackAudioArtifact,
+    TrackStatus,
+    VideoAsset,
+)
+from v2a_inspect.ui.pipeline import (
+    run_audio_generation_pipeline,
+    run_track_clip_pipeline,
+    run_track_delete_pipeline,
+    run_track_regeneration_pipeline,
+)
+from v2a_inspect.ui.routes import create_router
+from v2a_inspect.ui.store import VideoAssetStore
+from v2a_inspect.ui.track_edit import add_track, delete_track, set_clip
+
+RATE = 1000  # 4 s video -> 4000 samples; the sample value is its index
+
+
+def _ramp(path: Path, seconds: int = 4) -> Path:
+    wavfile.write(path, RATE, np.arange(seconds * RATE, dtype=np.int16))
+    return path
+
+
+def _fake_stem(*args) -> Path:
+    return _ramp(args[-1])
+
+
+def _fake_mix(*, output_path: str, **_kwargs) -> str:
+    Path(output_path).write_bytes(b"mp4")
+    return output_path
+
+
+def _stem(root: Path, track: SoundTrack, name: str) -> SoundTrackAudioArtifact:
+    return SoundTrackAudioArtifact(
+        sound_track_id=track.sound_track_id,
+        track_label=track.label,
+        track_type=track.track_type,
+        path=_ramp(root / name),
+        duration_sec=4.0,
+        event_count=1,
+        origin="generated",
+        seed=1,
+    )
+
+
+def _asset(root: Path, labels=("Door", "Wind")) -> tuple[VideoAsset, list[SoundTrack]]:
+    sources, tracks, events = [], [], []
+    for label in labels:
+        source = SoundSource(source_type="offscreen_unknown", label=label)
+        track = SoundTrack(
+            track_type="sfx",
+            label=label,
+            sound_source_id=source.sound_source_id,
+            generation_model="selsync",
+        )
+        sources.append(source)
+        tracks.append(track)
+        events.append(
+            SoundEvent(
+                sound_track_id=track.sound_track_id,
+                start_frame_index=0,
+                end_frame_index=30,
+                description=f"{label} event",
+            )
+        )
+    asset = VideoAsset(
+        source_path=root / "video.mp4",
+        frame_count=120,  # 4 s
+        sound_timeline=SoundTimeline(
+            sound_sources=sources, sound_tracks=tracks, sound_events=events
+        ),
+        sound_track_audio_artifacts=[
+            _stem(root, t, f"{t.label}.wav") for t in tracks
+        ],
+        track_status={t.sound_track_id: TrackStatus(state="done") for t in tracks},
+    )
+    return asset, tracks
+
+
+def _with_clip(asset: VideoAsset, track: SoundTrack, **clip) -> VideoAsset:
+    timeline = asset.sound_timeline
+    tracks = [
+        t.model_copy(update=clip) if t.sound_track_id == track.sound_track_id else t
+        for t in timeline.sound_tracks
+    ]
+    return asset.model_copy(
+        update={"sound_timeline": timeline.model_copy(update={"sound_tracks": tracks})}
+    )
+
+
+class ClipMathTest(unittest.TestCase):
+    def test_clamp_keeps_window_inside_stem_and_video(self) -> None:
+        kw = {"stem_duration": 4.0, "video_duration": 4.0}
+        self.assertEqual(clamp_clip(-1, 99, 0, **kw), (0.0, 4.0, 0.0))
+        self.assertEqual(clamp_clip(1, 2, 10, **kw), (1.0, 2.0, 2.0))  # 4 - end
+        self.assertEqual(clamp_clip(1, 2, -10, **kw), (1.0, 2.0, -1.0))  # -start
+        start, end, _ = clamp_clip(3.95, 3.96, 0, **kw)
+        self.assertAlmostEqual(end - start, MIN_CLIP_SEC)
+        self.assertLessEqual(end, 4.0)
+        with self.assertRaises(ValueError):
+            clamp_clip(0, 0.05, 0, stem_duration=0.05, video_duration=4.0)
+
+    def test_clamp_stem_longer_than_video_stays_in_video(self) -> None:
+        start, end, offset = clamp_clip(
+            0, 6, 3, stem_duration=6.0, video_duration=4.0
+        )
+        self.assertEqual((start, end, offset), (0.0, 4.0, 0.0))
+
+    def test_render_places_the_slice_at_start_plus_offset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            render_clip_wav(
+                _ramp(root / "in.wav"),
+                root / "out.wav",
+                start=1.0,
+                end=2.5,
+                offset=0.5,
+                video_duration=4.0,
+            )
+            rate, out = wavfile.read(root / "out.wav")
+            self.assertEqual((rate, len(out)), (RATE, 4000))
+            self.assertTrue(np.all(out[:1500] == 0))
+            self.assertTrue(np.array_equal(out[1500:3000], np.arange(1000, 2500)))
+            self.assertTrue(np.all(out[3000:] == 0))
+
+    def test_render_moves_before_the_stem_start(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            render_clip_wav(
+                _ramp(root / "in.wav"),
+                root / "out.wav",
+                start=2.0,
+                end=3.0,
+                offset=-2.0,
+                video_duration=4.0,
+            )
+            _, out = wavfile.read(root / "out.wav")
+            self.assertTrue(np.array_equal(out[:1000], np.arange(2000, 3000)))
+            self.assertTrue(np.all(out[1000:] == 0))
+
+
+class TrackEditTest(unittest.TestCase):
+    def test_set_clip_stores_clamped_values_and_full_extent_clears(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, (door, wind) = _asset(Path(temp_dir))
+            clipped = set_clip(asset, door.sound_track_id, 0.5, 9.0, 9.0)
+            track = clipped.sound_timeline.sound_tracks[0]
+            self.assertEqual(
+                (track.clip_start_sec, track.clip_end_sec, track.clip_offset_sec),
+                (0.5, 4.0, 0.0),  # offset limited so the clip ends at the video end
+            )
+            self.assertFalse(clipped.sound_timeline.sound_tracks[1].has_clip)
+            # Raw stem and peaks stay untouched.
+            self.assertEqual(
+                clipped.sound_track_audio_artifacts, asset.sound_track_audio_artifacts
+            )
+
+            cleared = set_clip(clipped, door.sound_track_id, 0.0, 4.0, 0.0)
+            self.assertFalse(cleared.sound_timeline.sound_tracks[0].has_clip)
+
+    def test_set_clip_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, (door, _) = _asset(Path(temp_dir))
+            with self.assertRaises(LookupError):
+                set_clip(asset, uuid4(), 0, 1, 0)
+            silent = asset.model_copy(update={"sound_track_audio_artifacts": []})
+            with self.assertRaises(ValueError):
+                set_clip(silent, door.sound_track_id, 0, 1, 0)
+
+    def test_delete_removes_track_events_orphan_source_and_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, (door, wind) = _asset(root)
+            event_artifact = SoundEventAudioArtifact(
+                sound_event_id=asset.sound_timeline.sound_events[0].sound_event_id,
+                sound_track_id=door.sound_track_id,
+                path=root / "e.wav",
+                duration_sec=1.0,
+                generation_model="t2a",
+                description="x",
+            )
+            asset = asset.model_copy(
+                update={
+                    "sound_event_audio_artifacts": [event_artifact],
+                    "separated_stem_paths": {
+                        door.sound_track_id: root / "a.wav",
+                        wind.sound_track_id: root / "b.wav",
+                    },
+                }
+            )
+            result = delete_track(asset, door.sound_track_id)
+            timeline = result.sound_timeline
+
+            self.assertEqual([t.label for t in timeline.sound_tracks], ["Wind"])
+            self.assertEqual([e.description for e in timeline.sound_events], ["Wind event"])
+            self.assertEqual([s.label for s in timeline.sound_sources], ["Wind"])
+            self.assertEqual(
+                [a.sound_track_id for a in result.sound_track_audio_artifacts],
+                [wind.sound_track_id],
+            )
+            self.assertEqual(result.sound_event_audio_artifacts, [])
+            self.assertEqual(list(result.track_status), [wind.sound_track_id])
+            self.assertEqual(list(result.separated_stem_paths), [wind.sound_track_id])
+            with self.assertRaises(LookupError):
+                delete_track(result, door.sound_track_id)
+
+    def test_delete_keeps_a_source_another_track_still_uses(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, (door, wind) = _asset(Path(temp_dir))
+            shared = asset.sound_timeline.sound_sources[0]
+            timeline = asset.sound_timeline
+            tracks = [
+                t.model_copy(update={"sound_source_id": shared.sound_source_id})
+                for t in timeline.sound_tracks
+            ]
+            asset = asset.model_copy(
+                update={"sound_timeline": timeline.model_copy(update={"sound_tracks": tracks})}
+            )
+            result = delete_track(asset, door.sound_track_id)
+            self.assertIn(
+                shared.sound_source_id,
+                [s.sound_source_id for s in result.sound_timeline.sound_sources],
+            )
+
+    def test_add_track_sets_model_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, _ = _asset(Path(temp_dir))
+            expected = {
+                "selsync": ("sfx", "selsync", "v2a", "visual_object"),
+                "t2a": ("sfx", "t2a", "t2a", "offscreen_unknown"),
+                "tts": ("speech", "tts", "tts", "offscreen_unknown"),
+                "separate": ("sfx", "separate", "t2a", "offscreen_unknown"),
+            }
+            for model, (ttype, gen, agent, source_type) in expected.items():
+                result, track = add_track(
+                    asset,
+                    label=f" New {model} ",
+                    description=" a sound ",
+                    model=model,
+                    spoken_text="Hello" if model == "tts" else "ignored",
+                    start_frame=10,
+                    end_frame=500,
+                )
+                timeline = result.sound_timeline
+                self.assertEqual(len(timeline.sound_tracks), 3)
+                self.assertEqual(
+                    (track.track_type, track.generation_model, track.agent_model),
+                    (ttype, gen, agent),
+                )
+                self.assertEqual(track.label, f"New {model}")
+                self.assertEqual(track.description, "a sound")
+                source = timeline.sound_sources[-1]
+                self.assertEqual(source.source_type, source_type)
+                self.assertEqual(track.sound_source_id, source.sound_source_id)
+                event = timeline.sound_events[-1]
+                self.assertEqual(event.sound_track_id, track.sound_track_id)
+                self.assertEqual((event.start_frame_index, event.end_frame_index), (10, 120))
+                self.assertEqual(event.description, "a sound")
+                self.assertEqual(event.spoken_text, "Hello" if model == "tts" else None)
+                SoundTimeline.model_validate(timeline.model_dump(mode="json"))
+
+    def test_add_track_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, _ = _asset(Path(temp_dir))
+            ok = {"label": "A", "description": "b", "model": "t2a",
+                  "spoken_text": None, "start_frame": 0, "end_frame": 30}
+            for bad in (
+                {"label": " "},
+                {"description": ""},
+                {"model": "tts"},  # speech needs spoken text
+                {"start_frame": 120},
+                {"start_frame": 30, "end_frame": 30},
+            ):
+                with self.assertRaises(ValueError, msg=str(bad)):
+                    add_track(asset, **{**ok, **bad})
+
+    def test_old_track_json_loads_without_clip_fields(self) -> None:
+        track = SoundTrack.model_validate(
+            {"track_type": "sfx", "label": "Old", "generation_model": "t2a"}
+        )
+        self.assertFalse(track.has_clip)
+
+
+class TrackEditPipelineTest(unittest.TestCase):
+    def test_clip_pipeline_mixes_and_serves_the_clipped_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, (door, wind) = _asset(root)
+            asset = set_clip(asset, door.sound_track_id, 1.0, 2.5, 0.5)
+            store = VideoAssetStore()
+            with patch(
+                "v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix
+            ) as mix:
+                asyncio.run(run_track_clip_pipeline(asset, store))
+            snapshot = asyncio.run(store.snapshot())
+
+            self.assertEqual(snapshot.status, "complete")
+            by_track = {a.sound_track_id: a for a in snapshot.asset.sound_track_audio_artifacts}
+            door_art, wind_art = by_track[door.sound_track_id], by_track[wind.sound_track_id]
+            self.assertEqual(door_art.path, root / "Door.wav")  # raw stem untouched
+            self.assertTrue(door_art.clip_path.exists())
+            self.assertIsNone(wind_art.clip_path)
+            mixed = mix.call_args.kwargs["generated_audio"]
+            self.assertEqual(mixed[str(door.sound_track_id)], str(door_art.clip_path))
+            self.assertEqual(mixed[str(wind.sound_track_id)], str(wind_art.path))
+            _, out = wavfile.read(door_art.clip_path)
+            self.assertTrue(np.array_equal(out[1500:3000], np.arange(1000, 2500)))
+
+            app = FastAPI()
+            app.include_router(create_router(store))
+            body = TestClient(app).get(f"/api/audio/tracks/{door.sound_track_id}").content
+            self.assertEqual(body, door_art.clip_path.read_bytes())
+
+    def test_removing_the_clip_drops_the_edited_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, (door, _) = _asset(root)
+            store = VideoAssetStore()
+            with patch(
+                "v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix
+            ):
+                asyncio.run(
+                    run_track_clip_pipeline(set_clip(asset, door.sound_track_id, 1, 2, 0), store)
+                )
+                clipped = asyncio.run(store.snapshot()).asset
+                edited = clipped.sound_track_audio_artifacts[0].clip_path
+                self.assertTrue(edited.exists())
+                asyncio.run(
+                    run_track_clip_pipeline(set_clip(clipped, door.sound_track_id, 0, 4, 0), store)
+                )
+            self.assertFalse(edited.exists())
+            self.assertIsNone(
+                asyncio.run(store.snapshot()).asset.sound_track_audio_artifacts[0].clip_path
+            )
+
+    def test_delete_pipeline_rebuilds_preview_and_removes_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, (door, wind) = _asset(root)
+            store = VideoAssetStore()
+            with patch(
+                "v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix
+            ) as mix:
+                asyncio.run(run_track_delete_pipeline(asset, store, str(door.sound_track_id)))
+                snapshot = asyncio.run(store.snapshot())
+                self.assertEqual(snapshot.status, "complete")
+                self.assertEqual(
+                    list(mix.call_args.kwargs["generated_audio"]), [str(wind.sound_track_id)]
+                )
+                self.assertFalse((root / "Door.wav").exists())
+                self.assertTrue((root / "Wind.wav").exists())
+                self.assertIsNotNone(snapshot.asset.synthesized_video_path)
+                self.assertEqual(
+                    [t.label for t in snapshot.asset.sound_timeline.sound_tracks], ["Wind"]
+                )
+
+                asyncio.run(
+                    run_track_delete_pipeline(snapshot.asset, store, str(wind.sound_track_id))
+                )
+            last = asyncio.run(store.snapshot()).asset
+            self.assertEqual(last.sound_timeline.sound_tracks, [])
+            self.assertIsNone(last.synthesized_video_path)  # no audio left
+            self.assertEqual(last.sound_track_audio_artifacts, [])
+
+    def test_regenerate_resets_only_that_tracks_clip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, (door, wind) = _asset(root)
+            asset = set_clip(asset, door.sound_track_id, 1, 2, 0)
+            asset = set_clip(asset, wind.sound_track_id, 0, 3, 0.5)
+            store = VideoAssetStore()
+            with (
+                patch("v2a_inspect.ui.pipeline.generate_track", side_effect=_fake_stem),
+                patch("v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix),
+            ):
+                asyncio.run(
+                    run_track_regeneration_pipeline(
+                        asset, store, str(door.sound_track_id), "generate", None, 5
+                    )
+                )
+            snapshot = asyncio.run(store.snapshot())
+
+            self.assertEqual(snapshot.status, "complete")
+            door_t, wind_t = snapshot.asset.sound_timeline.sound_tracks
+            self.assertFalse(door_t.has_clip)
+            self.assertEqual((wind_t.clip_start_sec, wind_t.clip_end_sec, wind_t.clip_offset_sec), (0.0, 3.0, 0.5))
+            by_track = {a.sound_track_id: a for a in snapshot.asset.sound_track_audio_artifacts}
+            self.assertIsNone(by_track[door.sound_track_id].clip_path)
+            self.assertIsNotNone(by_track[wind.sound_track_id].clip_path)
+
+    def test_full_generation_resets_every_clip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, (door, wind) = _asset(root)
+            asset = set_clip(asset, door.sound_track_id, 1, 2, 0)
+            asset = set_clip(asset, wind.sound_track_id, 0, 3, 0.5)
+            asset = asset.model_copy(update={"raw_video_path": root / "raw.mp4"})
+            store = VideoAssetStore()
+            with (
+                patch("v2a_inspect.ui.pipeline.generate_track", side_effect=_fake_stem),
+                patch("v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix),
+            ):
+                asyncio.run(run_audio_generation_pipeline(asset, store, None))
+            snapshot = asyncio.run(store.snapshot())
+
+            self.assertEqual(snapshot.status, "complete")
+            self.assertFalse(any(t.has_clip for t in snapshot.asset.sound_timeline.sound_tracks))
+            self.assertTrue(
+                all(a.clip_path is None for a in snapshot.asset.sound_track_audio_artifacts)
+            )
+
+
+class TrackEditRouteTest(unittest.TestCase):
+    def _client(self, asset: VideoAsset | None, *, running: bool = False):
+        store = VideoAssetStore()
+        if asset is not None:
+            asyncio.run(store.set_complete_asset(asset))
+        if running:
+            asyncio.run(store.set_running(stage="busy"))
+        app = FastAPI()
+        app.include_router(create_router(store))
+        return TestClient(app), store
+
+    def test_clip_route_queues_validates_and_guards(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, (door, _) = _asset(Path(temp_dir))
+            body = {"start": 1.0, "end": 2.0, "offset": 99.0}
+            url = f"/api/audio/tracks/{door.sound_track_id}/clip"
+
+            client, store = self._client(asset)
+            with patch("v2a_inspect.ui.routes.run_track_clip_pipeline") as pipeline:
+                response = client.post(url, json=body)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.json(),
+                {"status": "queued", "clip": {"start": 1.0, "end": 2.0, "offset": 2.0}},
+            )
+            queued = pipeline.call_args.args[0]
+            self.assertEqual(queued.sound_timeline.sound_tracks[0].clip_offset_sec, 2.0)
+            self.assertEqual(
+                asyncio.run(store.snapshot()).asset.sound_timeline.sound_tracks[0].clip_end_sec,
+                2.0,
+            )
+
+            busy, _ = self._client(asset, running=True)
+            self.assertEqual(busy.post(url, json=body).status_code, 409)
+            empty, _ = self._client(None)
+            self.assertEqual(empty.post(url, json=body).status_code, 404)
+            client, _ = self._client(asset)
+            for bad_id in (uuid4(), "nope"):
+                self.assertEqual(
+                    client.post(f"/api/audio/tracks/{bad_id}/clip", json=body).status_code, 404
+                )
+            silent = asset.model_copy(update={"sound_track_audio_artifacts": []})
+            client, _ = self._client(silent)
+            self.assertEqual(client.post(url, json=body).status_code, 422)
+
+    def test_delete_route_queues_and_guards(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, (door, _) = _asset(Path(temp_dir))
+            url = f"/api/audio/tracks/{door.sound_track_id}"
+
+            client, _ = self._client(asset)
+            with patch("v2a_inspect.ui.routes.run_track_delete_pipeline") as pipeline:
+                response = client.delete(url)
+            self.assertEqual(response.json(), {"status": "queued"})
+            self.assertEqual(pipeline.call_args.args[2], str(door.sound_track_id))
+
+            busy, _ = self._client(asset, running=True)
+            self.assertEqual(busy.delete(url).status_code, 409)
+            empty, _ = self._client(None)
+            self.assertEqual(empty.delete(url).status_code, 404)
+            client, _ = self._client(asset)
+            self.assertEqual(client.delete(f"/api/audio/tracks/{uuid4()}").status_code, 404)
+
+    def test_create_route_adds_the_track_and_stays_idle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, _ = _asset(Path(temp_dir))
+            body = {
+                "label": "Glass",
+                "description": "glass breaking",
+                "model": "t2a",
+                "start_frame": 30,
+                "end_frame": 90,
+            }
+            client, store = self._client(asset)
+            response = client.post("/api/audio/tracks", json=body)
+            snapshot = asyncio.run(store.snapshot())
+
+            self.assertEqual(response.status_code, 200)
+            tracks = snapshot.asset.sound_timeline.sound_tracks
+            self.assertEqual(response.json()["sound_track_id"], str(tracks[-1].sound_track_id))
+            self.assertEqual(snapshot.status, "complete")  # regenerate can start right away
+            self.assertEqual(tracks[-1].generation_model, "t2a")
+
+            self.assertEqual(client.post("/api/audio/tracks", json={**body, "label": " "}).status_code, 422)
+            self.assertEqual(client.post("/api/audio/tracks", json={**body, "model": "x"}).status_code, 422)
+            self.assertEqual(
+                client.post("/api/audio/tracks", json={**body, "model": "separate"}).status_code, 422
+            )  # the asset has no original audio
+            busy, _ = self._client(asset, running=True)
+            self.assertEqual(busy.post("/api/audio/tracks", json=body).status_code, 409)
+            empty, _ = self._client(None)
+            self.assertEqual(empty.post("/api/audio/tracks", json=body).status_code, 404)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -28,3 +28,9 @@ class SoundTrackAudioArtifact(SchemaModel):
     seed: int | None = None
     attempt: int | None = None
     description: str | None = None
+    # Full-length WAV with the track's clip applied; what the preview and Play/Solo use.
+    clip_path: Path | None = None
+
+    @property
+    def playback_path(self) -> Path:
+        return self.clip_path or self.path

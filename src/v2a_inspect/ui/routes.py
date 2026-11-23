@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from v2a_inspect.media_utils import probe_prepared_video
 from v2a_inspect.audio_generation.routing import route_tracks
@@ -32,6 +32,8 @@ from .pipeline import (
     run_event_audio_regeneration_pipeline,
     run_residual_toggle_pipeline,
     run_separation_planning_pipeline,
+    run_track_clip_pipeline,
+    run_track_delete_pipeline,
     run_track_regeneration_pipeline,
 )
 from .projects import (
@@ -50,6 +52,7 @@ from .rows import (
     tracking_window_rows,
 )
 from .store import VideoAssetSnapshot, VideoAssetStore
+from .track_edit import NewTrackModel, add_track, set_clip
 
 
 DEFAULT_WORK_DIR = os.getenv("V2A_INSPECT_UI_WORK_DIR")
@@ -58,6 +61,21 @@ DEFAULT_SCENE_THRESHOLD = float(os.getenv("V2A_INSPECT_UI_SCENE_THRESHOLD", "27.
 DEFAULT_MAX_KEYFRAMES_PER_SCENE = int(
     os.getenv("V2A_INSPECT_UI_MAX_KEYFRAMES_PER_SCENE", "20")
 )
+
+
+class ClipBody(BaseModel):
+    start: float
+    end: float
+    offset: float
+
+
+class NewTrackBody(BaseModel):
+    label: str
+    description: str
+    model: NewTrackModel
+    spoken_text: str | None = None
+    start_frame: int
+    end_frame: int
 
 
 def create_router(store: VideoAssetStore) -> APIRouter:
@@ -146,7 +164,9 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         )
         if artifact is None:
             raise HTTPException(status_code=404, detail="No track audio available")
-        return _audio_file_response(artifact.path, "No track audio file available")
+        return _audio_file_response(
+            artifact.playback_path, "No track audio file available"
+        )
 
     @router.get("/api/audio/events/{sound_event_id}")
     async def get_audio_event(sound_event_id: str) -> FileResponse:
@@ -249,6 +269,89 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             asset, stage="queued track audio regeneration"
         )
         return {"status": "queued"}
+
+    @router.post("/api/audio/tracks/{sound_track_id}/clip")
+    async def set_audio_track_clip(
+        sound_track_id: str,
+        body: ClipBody,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        track_id = _track_uuid(sound_track_id)
+        try:
+            updated = set_clip(asset, track_id, body.start, body.end, body.offset)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        track = next(
+            t for t in updated.sound_timeline.sound_tracks if t.sound_track_id == track_id
+        )
+        background_tasks.add_task(run_track_clip_pipeline, updated, store)
+        await store.publish_asset_mutation(updated, stage="queued track audio edit")
+        return {
+            "status": "queued",
+            "clip": {
+                "start": track.clip_start_sec,
+                "end": track.clip_end_sec,
+                "offset": track.clip_offset_sec,
+            },
+        }
+
+    @router.delete("/api/audio/tracks/{sound_track_id}")
+    async def delete_audio_track(
+        sound_track_id: str,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        _track_uuid(sound_track_id)
+        tracks = asset.sound_timeline.sound_tracks if asset.sound_timeline else []
+        if not any(str(t.sound_track_id) == sound_track_id for t in tracks):
+            raise HTTPException(status_code=404, detail="Sound track not found")
+        background_tasks.add_task(
+            run_track_delete_pipeline, asset, store, sound_track_id
+        )
+        await store.publish_asset_mutation(asset, stage="queued track delete")
+        return {"status": "queued"}
+
+    @router.post("/api/audio/tracks")
+    async def create_audio_track(body: NewTrackBody) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None or asset.sound_timeline is None:
+            raise HTTPException(status_code=404, detail="No sound timeline loaded")
+        if body.model == "separate" and not asset.has_audio:
+            raise HTTPException(
+                status_code=422, detail="No original audio to separate."
+            )
+        try:
+            updated, track = add_track(
+                asset,
+                label=body.label,
+                description=body.description,
+                model=body.model,
+                spoken_text=body.spoken_text,
+                start_frame=body.start_frame,
+                end_frame=body.end_frame,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Audio is generated next through the per-track regenerate call.
+        await store.publish_asset_mutation(updated, stage="added track")
+        await store.set_complete(stage="Added track.")
+        return {"status": "ok", "sound_track_id": str(track.sound_track_id)}
 
     @router.post("/api/audio/mode")
     async def set_audio_mode(
@@ -636,6 +739,13 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     return router
+
+
+def _track_uuid(sound_track_id: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(sound_track_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Sound track not found") from exc
 
 
 def _reject_track_level_event(asset: VideoAsset, sound_event_id: str) -> None:

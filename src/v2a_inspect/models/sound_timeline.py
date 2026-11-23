@@ -53,8 +53,21 @@ class SoundTrack(SchemaModel):
     generation_model: SoundGenerationModel = "t2a"
     agent_model: Literal["t2a", "v2a", "tts"] | None = None
     description: str | None = None
+    # Non-destructive audio edit: play the stem's [clip_start_sec, clip_end_sec] (None = its
+    # start/end), shifted by clip_offset_sec on the video timeline. See audio_generation/clip.py.
+    clip_start_sec: float | None = None
+    clip_end_sec: float | None = None
+    clip_offset_sec: float = 0.0
 
     notes: str | None = None
+
+    @property
+    def has_clip(self) -> bool:
+        return (
+            self.clip_start_sec is not None
+            or self.clip_end_sec is not None
+            or self.clip_offset_sec != 0.0
+        )
 
     @model_validator(mode="before")
     @classmethod
