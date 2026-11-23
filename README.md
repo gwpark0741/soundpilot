@@ -9,8 +9,9 @@ Top-level audio mode:
 - **Generate** (default): per-track routing.
   - Video-synced SFX: SelVA w/ SelSync (Audyssey tools server, one stem per track).
   - Ambience/background and off-screen sources: ElevenLabs SFX (t2a).
-  - Speech: ElevenLabs TTS (Kokoro via `V2A_INSPECT_TTS_PROVIDER=kokoro`). On hold:
-    the current ElevenLabs plan returns 402 `paid_plan_required` for the default voice.
+  - Speech: Kokoro TTS on the inference server (demo compose default, English voices);
+    `V2A_INSPECT_TTS_PROVIDER=elevenlabs` selects ElevenLabs TTS, which the current
+    plan rejects with 402 `paid_plan_required`.
 - **Separate** (needs original audio): SAM Audio separation via the Audyssey tools
   server. The residual (original minus separated stems) can be toggled.
 

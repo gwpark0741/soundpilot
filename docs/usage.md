@@ -63,14 +63,14 @@ Generate 모드에서 track별 모델은 다음 순서로 정해진다 (`audio_g
 
 | 조건 | 모델 |
 |---|---|
-| speech track | ElevenLabs TTS (`V2A_INSPECT_TTS_PROVIDER=kokoro`로 Kokoro 선택 가능) |
+| speech track | Kokoro TTS (inference server, 영어 voice). `V2A_INSPECT_TTS_PROVIDER=elevenlabs`로 ElevenLabs 선택 가능 |
 | ambience track, 또는 source가 `scene_global` / `offscreen_unknown` | ElevenLabs SFX (t2a) |
 | 그 외, agent가 영상 동기 SFX(v2a)를 고른 track | SelVA w/ SelSync (track당 stem 1개) |
 | 그 외 | agent가 고른 모델 |
 
 agent는 화면에 보이는 물체가 내고 타이밍이 동작에 맞아야 하는 소리(타격, 발소리, 휘두르기, 옷·갑옷 움직임 등)를 v2a로 고르고, ambience, 화면 밖 소리, 숨소리·기합 같은 비언어 음성만 t2a로 고른다 (`prompts/files/system/sound_timeline_agent.txt`).
 
-Separate 모드에서는 모든 track이 분리(SAM Audio) 대상이다. ElevenLabs TTS는 현재 plan에서 기본 voice가 402(`paid_plan_required`)로 막혀 보류 중이다.
+Separate 모드에서는 모든 track이 분리(SAM Audio) 대상이다. 데모 compose는 TTS로 Kokoro를 쓴다. ElevenLabs TTS는 현재 plan에서 기본 voice가 402(`paid_plan_required`)로 막혀 있다.
 
 ## 5. 주요 환경 변수
 
@@ -79,7 +79,7 @@ Separate 모드에서는 모든 track이 분리(SAM Audio) 대상이다. ElevenL
 | `GEMINI_API_KEY` | 분석과 timeline agent (필수) |
 | `V2A_INSPECT_LLM_LARGE_MODEL` | sound timeline agent 모델 (기본 `gemini-4-hydrogen`, 불가 시 `gemini-3.5-flash`) |
 | `ELEVENLABS_API_KEY` | t2a와 TTS |
-| `V2A_INSPECT_TTS_PROVIDER` | `elevenlabs`(기본) 또는 `kokoro` |
+| `V2A_INSPECT_TTS_PROVIDER` | `kokoro`(데모 compose 기본) 또는 `elevenlabs` |
 | `V2A_INSPECT_AUDYSSEY_TOOLS_URL` / `V2A_INSPECT_AUDYSSEY_TOOL_TOKEN` | tools server 주소와 Bearer token |
 | `V2A_INSPECT_SELSYNC_SEED` | 첫 SelVA w/ SelSync 생성의 seed (기본 42) |
 | `V2A_INSPECT_UI_PASSWORD` | UI 비밀번호 (비우면 인증 없음) |

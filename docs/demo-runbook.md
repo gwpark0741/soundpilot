@@ -85,4 +85,4 @@ docker save audyssey-tools:demo-1117 v2a-inspect:demo v2a-inspect-server:demo | 
 
 ## 7. TTS
 
-Kokoro TTS는 보류 중이다 (사용자 trial 2026-11-20).
+데모 compose는 speech track을 Kokoro(inference server, 영어 voice `af_heart`)로 생성한다. Kokoro의 영어 G2P가 쓰는 spaCy `en_core_web_sm`은 server 이미지에 포함되어 있다.

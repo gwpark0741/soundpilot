@@ -114,6 +114,7 @@ services:
       V2A_INSPECT_LLM_LARGE_MODEL: ${V2A_INSPECT_LLM_LARGE_MODEL:-gemini-4-hydrogen}
       V2A_INSPECT_SELSYNC_SEED: ${V2A_INSPECT_SELSYNC_SEED:-42}
       V2A_INSPECT_TRACK_DESCRIPTION_DEFAULT: ${V2A_INSPECT_TRACK_DESCRIPTION_DEFAULT:-label}
+      V2A_INSPECT_TTS_PROVIDER: ${V2A_INSPECT_TTS_PROVIDER:-kokoro} # ElevenLabs TTS returns 402 on the current plan
     volumes:
       - v2a_inspect_data:/data
     healthcheck:
