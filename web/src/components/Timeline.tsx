@@ -405,7 +405,10 @@ export default function Timeline({
                     aria-label={`Play ${soundTrack.label}`}
                     className="btn sm ico"
                     disabled={!audioTrack}
-                    onClick={() => onPlayTrackAudio?.(id, clampedFrame)}
+                    onClick={(event) => {
+                      event.stopPropagation(); // the lane would otherwise select this track
+                      onPlayTrackAudio?.(id, clampedFrame);
+                    }}
                     title={noAudioTitle}
                     type="button"
                   >
@@ -416,7 +419,10 @@ export default function Timeline({
                     aria-pressed={soloTrackId === id}
                     className="btn sm tog"
                     disabled={!audioTrack}
-                    onClick={() => onToggleSolo(id)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onToggleSolo(id);
+                    }}
                     title={noAudioTitle}
                     type="button"
                   >

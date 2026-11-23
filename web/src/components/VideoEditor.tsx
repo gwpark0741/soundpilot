@@ -148,12 +148,10 @@ export default function VideoEditor({
         : (selectedSourceLabel ?? selectedTrack.label)
       : `${selectedSourceLabel ?? selectedTrack.label} has no object mask`
     : null;
+  // Pending span edits do not change the generated audio: its waveforms and Play/Solo stay until Generate.
   const audioTrackArtifacts = useMemo<AudioTrackArtifact[]>(
-    () =>
-      hasTimelineEdits
-        ? []
-        : (baseAsset?.sound_track_audio_artifacts ?? state.audio_tracks ?? []),
-    [baseAsset, hasTimelineEdits, state.audio_tracks],
+    () => baseAsset?.sound_track_audio_artifacts ?? state.audio_tracks ?? [],
+    [baseAsset, state.audio_tracks],
   );
   // Scrubbing fires many selectFrame calls: the video gets at most one seek per animation frame, none while
   // it is still seeking, and the last target is applied on `seeked`.
