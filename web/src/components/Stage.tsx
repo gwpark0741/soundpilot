@@ -44,13 +44,16 @@ export default function Stage({
   onVideoSync,
   onVideoPlayState,
 }: StageProps) {
-  // A new src reloads the element: remember where it was so it can pick up from there.
+  // A new src reloads the element: remember where it was so it can pick up from there. A restore that is
+  // still pending (the load has not finished or failed) keeps its saved time, since the element is at 0 now.
   const resumeRef = useRef<{ time: number; paused: boolean } | null>(null);
   const shownSrcRef = useRef(videoSrc);
   if (shownSrcRef.current !== videoSrc) {
     shownSrcRef.current = videoSrc;
     const element = videoRef.current;
-    resumeRef.current = element ? { time: element.currentTime, paused: element.paused } : null;
+    if (!resumeRef.current) {
+      resumeRef.current = element ? { time: element.currentTime, paused: element.paused } : null;
+    }
   }
   // The reload resets the element to 0 and pauses it without a pause event.
   const syncPlayState = () => onVideoPlayState?.(!videoRef.current?.paused);

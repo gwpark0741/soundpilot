@@ -105,6 +105,8 @@ export default function VideoEditor({
   const [trackWindow, setTrackWindow] = useState<TrackWindowResponse | null>(null);
   const [timelineRows, setTimelineRows] = useState<TimelineRow[]>(state.timeline_rows);
   const [baseAsset, setBaseAsset] = useState<VideoAsset | null>(null);
+  // The preview URL is set together with the asset it came from, so it never names a file the asset lacks.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [draftAsset, setDraftAsset] = useState<VideoAsset | null>(null);
   // Span edits not sent to the server yet, per event; the timeline rows already show them.
   const [pendingSpans, setPendingSpans] = useState<PendingSpans>({});
@@ -201,17 +203,22 @@ export default function VideoEditor({
       setPendingSpans(next.pending);
     }
     let alive = true;
+    const assetVersion = state.asset_version;
     void fetchAssetForExport()
       .then((asset) => {
         if (!alive) {
           return;
         }
         setBaseAsset(asset);
+        setPreviewUrl(
+          asset?.synthesized_video_path ? `/api/synthesized-video?asset_version=${assetVersion}` : null,
+        );
         setDraftAsset(asset ? cloneAsset(asset) : null);
       })
       .catch(() => {
         if (alive) {
           setBaseAsset(null);
+          setPreviewUrl(null);
           setDraftAsset(null);
         }
       });
@@ -234,6 +241,7 @@ export default function VideoEditor({
     trackWindowAssetRef.current = null;
     setTimelineRows(state.timeline_rows);
     setBaseAsset(null);
+    setPreviewUrl(null);
     setDraftAsset(null);
     setPendingSpans({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -714,6 +722,7 @@ export default function VideoEditor({
     setTrackWindow(null);
     setTimelineRows([]);
     setBaseAsset(null);
+    setPreviewUrl(null);
     setDraftAsset(null);
     setPendingSpans({});
   }
@@ -740,8 +749,8 @@ export default function VideoEditor({
     }
   }
 
-  const mp4Ready = state.status === "complete" && !!baseAsset?.synthesized_video_path && !hasTimelineEdits;
-  const mp4Href = `/api/synthesized-video?asset_version=${state.asset_version}`;
+  const mp4Ready = state.status === "complete" && !!previewUrl && !hasTimelineEdits;
+  const mp4Href = previewUrl ?? "";
   // Changing the player's src reloads it and jumps to 0, so the src follows the files, not the edit state:
   // the previous preview stays while a re-render runs, and a new URL appears only when a run completes.
   const sourceRef = useRef({ videoId: "", original: "", preview: null as string | null });
@@ -752,7 +761,7 @@ export default function VideoEditor({
     source.preview = null;
   }
   if (state.status === "complete") {
-    source.preview = baseAsset?.synthesized_video_path ? mp4Href : null;
+    source.preview = previewUrl;
   }
 
   return (
