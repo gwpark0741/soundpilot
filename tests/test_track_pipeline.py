@@ -22,6 +22,7 @@ from v2a_inspect.models import (
 from v2a_inspect.audio_generation.plan import build_audio_plan
 from v2a_inspect.ui.pipeline import (
     _rebuild_audio_outputs,
+    _waveform_peaks,
     run_audio_generation_pipeline,
 )
 from v2a_inspect.ui.store import VideoAssetStore
@@ -454,6 +455,15 @@ class TrackPipelineTest(unittest.TestCase):
             }
             self.assertEqual(routed[clash.sound_track_id], "t2a")
             self.assertEqual(snapshot.asset.track_status[clash.sound_track_id].state, "done")
+
+    def test_waveform_peaks_use_a_fixed_db_scale(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            quiet = root / "quiet.wav"  # ~-78 dBFS noise, like a silent SelSync stem
+            wavfile.write(quiet, 48000, (np.random.randn(48000) * 4).astype(np.int16))
+            self.assertEqual(max(_waveform_peaks(quiet)), 0.0)
+            loud = _waveform_peaks(_write_sine(root / "loud.wav"))  # -6 dBFS
+            self.assertAlmostEqual(max(loud), 0.9, places=2)
 
     def test_event_level_track_failure_is_reported_in_track_status(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

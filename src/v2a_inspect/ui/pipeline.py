@@ -1232,7 +1232,9 @@ def _waveform_peaks(path: Path, *, bucket_count: int = 768) -> list[float]:
 
     buckets = max(1, min(bucket_count, samples.size))
     peaks = [float(chunk.max()) for chunk in np.array_split(samples, buckets)]
-    max_peak = max(peaks) if peaks else 0.0
-    if max_peak > 0:
-        peaks = [peak / max_peak for peak in peaks]
-    return [round(min(max(peak, 0.0), 1.0), 4) for peak in peaks]
+    # Fixed dB scale shared by all tracks (-60 dBFS -> 0, 0 dBFS -> 1), so a silent
+    # stem draws flat instead of being stretched to full height.
+    return [
+        round(min(max((20 * np.log10(peak + 1e-9) + 60) / 60, 0.0), 1.0), 4)
+        for peak in peaks
+    ]
