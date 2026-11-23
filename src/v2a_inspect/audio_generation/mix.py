@@ -85,7 +85,9 @@ def mix_audio_into_video(
             # TTS/T2A clips keep their natural length (ElevenLabs does not stretch to
             # the event window); total_duration still bounds the stem.
             keep_full = item.generation_model in ("tts", "t2a")
-            target_duration = max(0.01, clip_dur if keep_full else min(clip_dur, duration))
+            target_duration = max(
+                0.01, clip_dur if keep_full else min(clip_dur, duration)
+            )
             clip = clip.subclipped(0, target_duration).with_duration(target_duration)
             clip = clip.with_start(item.time[0])
 
@@ -182,11 +184,29 @@ def _mux_copying_video(video_path: str, audio, output_path: str) -> bool:
         audio.write_audiofile(str(wav), fps=44100, codec="pcm_s16le", logger=None)
         result = subprocess.run(
             [
-                ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                "-i", video_path, "-i", str(wav),
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-c:v", "copy", "-c:a", "aac", "-af", "apad", "-shortest",
-                "-movflags", "+faststart", str(tmp),
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                video_path,
+                "-i",
+                str(wav),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-af",
+                "apad",
+                "-shortest",
+                "-movflags",
+                "+faststart",
+                str(tmp),
             ],  # fmt: skip
             capture_output=True,
             text=True,
@@ -195,7 +215,9 @@ def _mux_copying_video(video_path: str, audio, output_path: str) -> bool:
         if result.returncode != 0 or not tmp.exists():
             logger.warning("ffmpeg mux failed, re-encoding: %s", result.stderr.strip())
             return False
-        os.replace(tmp, out)  # a player reading the old preview never sees a half-written file
+        os.replace(
+            tmp, out
+        )  # a player reading the old preview never sees a half-written file
         return True
     except Exception as e:  # noqa: BLE001 - the re-encode path still works.
         logger.warning("ffmpeg mux failed, re-encoding: %s", e)
@@ -232,7 +254,9 @@ def mix_audio_items_to_wav(
             # TTS/T2A clips keep their natural length (ElevenLabs does not stretch to
             # the event window); total_duration still bounds the stem.
             keep_full = item.generation_model in ("tts", "t2a")
-            target_duration = max(0.01, clip_dur if keep_full else min(clip_dur, duration))
+            target_duration = max(
+                0.01, clip_dur if keep_full else min(clip_dur, duration)
+            )
             clip = clip.subclipped(0, target_duration).with_duration(target_duration)
             clip = clip.with_start(item.time[0])
 

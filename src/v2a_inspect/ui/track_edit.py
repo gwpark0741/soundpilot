@@ -34,11 +34,17 @@ def _replace_track(asset: VideoAsset, track: SoundTrack) -> VideoAsset:
     )
 
 
-def reset_clips(timeline: SoundTimeline, track_ids: set[UUID] | None = None) -> SoundTimeline:
+def reset_clips(
+    timeline: SoundTimeline, track_ids: set[UUID] | None = None
+) -> SoundTimeline:
     """Drop the clip of the given tracks (all when None): their audio changed."""
     tracks = [
         t.model_copy(
-            update={"clip_start_sec": None, "clip_end_sec": None, "clip_offset_sec": 0.0}
+            update={
+                "clip_start_sec": None,
+                "clip_end_sec": None,
+                "clip_offset_sec": 0.0,
+            }
         )
         if t.has_clip and (track_ids is None or t.sound_track_id in track_ids)
         else t
@@ -51,9 +57,12 @@ def set_clip(
     asset: VideoAsset, track_id: UUID, start: float, end: float, offset: float
 ) -> VideoAsset:
     """Store the clamped clip on the track; the full original extent clears it."""
-    track = next((t for t in _timeline(asset).sound_tracks if t.sound_track_id == track_id), None)
+    track = next(
+        (t for t in _timeline(asset).sound_tracks if t.sound_track_id == track_id), None
+    )
     stem = next(
-        (a for a in asset.sound_track_audio_artifacts if a.sound_track_id == track_id), None
+        (a for a in asset.sound_track_audio_artifacts if a.sound_track_id == track_id),
+        None,
     )
     if track is None:
         raise LookupError("Sound track not found.")
@@ -71,13 +80,21 @@ def set_clip(
         return _replace_track(
             asset,
             track.model_copy(
-                update={"clip_start_sec": None, "clip_end_sec": None, "clip_offset_sec": 0.0}
+                update={
+                    "clip_start_sec": None,
+                    "clip_end_sec": None,
+                    "clip_offset_sec": 0.0,
+                }
             ),
         )
     return _replace_track(
         asset,
         track.model_copy(
-            update={"clip_start_sec": start, "clip_end_sec": end, "clip_offset_sec": offset}
+            update={
+                "clip_start_sec": start,
+                "clip_end_sec": end,
+                "clip_offset_sec": offset,
+            }
         ),
     )
 
@@ -85,7 +102,9 @@ def set_clip(
 def delete_track(asset: VideoAsset, track_id: UUID) -> VideoAsset:
     """Remove the track with its events, orphaned source, audio artifacts and status."""
     timeline = _timeline(asset)
-    track = next((t for t in timeline.sound_tracks if t.sound_track_id == track_id), None)
+    track = next(
+        (t for t in timeline.sound_tracks if t.sound_track_id == track_id), None
+    )
     if track is None:
         raise LookupError("Sound track not found.")
     tracks = [t for t in timeline.sound_tracks if t.sound_track_id != track_id]
@@ -93,11 +112,14 @@ def delete_track(asset: VideoAsset, track_id: UUID) -> VideoAsset:
     timeline = timeline.model_copy(
         update={
             "sound_tracks": tracks,
-            "sound_events": [e for e in timeline.sound_events if e.sound_track_id != track_id],
+            "sound_events": [
+                e for e in timeline.sound_events if e.sound_track_id != track_id
+            ],
             "sound_sources": [
                 s
                 for s in timeline.sound_sources
-                if s.sound_source_id != track.sound_source_id or s.sound_source_id in used_sources
+                if s.sound_source_id != track.sound_source_id
+                or s.sound_source_id in used_sources
             ],
         }
     )
@@ -105,12 +127,18 @@ def delete_track(asset: VideoAsset, track_id: UUID) -> VideoAsset:
         update={
             "sound_timeline": timeline,
             "sound_track_audio_artifacts": [
-                a for a in asset.sound_track_audio_artifacts if a.sound_track_id != track_id
+                a
+                for a in asset.sound_track_audio_artifacts
+                if a.sound_track_id != track_id
             ],
             "sound_event_audio_artifacts": [
-                a for a in asset.sound_event_audio_artifacts if a.sound_track_id != track_id
+                a
+                for a in asset.sound_event_audio_artifacts
+                if a.sound_track_id != track_id
             ],
-            "track_status": {k: v for k, v in asset.track_status.items() if k != track_id},
+            "track_status": {
+                k: v for k, v in asset.track_status.items() if k != track_id
+            },
             "separated_stem_paths": {
                 k: v for k, v in asset.separated_stem_paths.items() if k != track_id
             },
@@ -177,7 +205,9 @@ def set_event_spans(
 ) -> VideoAsset:
     """Move the given events of one track; each must belong to it and fit in the video."""
     timeline = _timeline(asset)
-    own = {e.sound_event_id for e in timeline.sound_events if e.sound_track_id == track_id}
+    own = {
+        e.sound_event_id for e in timeline.sound_events if e.sound_track_id == track_id
+    }
     for event_id, (start, end) in spans.items():
         if event_id not in own:
             raise ValueError("The event does not belong to this track.")

@@ -41,9 +41,7 @@ def _post(endpoint: str, files: dict, data: dict, out_path: Path) -> Path:
     settings = get_settings()
     url = settings.audyssey_tools_url
     token = settings.audyssey_tool_token
-    headers = (
-        {"Authorization": f"Bearer {token.get_secret_value()}"} if token else {}
-    )
+    headers = {"Authorization": f"Bearer {token.get_secret_value()}"} if token else {}
     try:
         response = httpx.post(
             f"{url}/{endpoint}",
@@ -53,7 +51,9 @@ def _post(endpoint: str, files: dict, data: dict, out_path: Path) -> Path:
             timeout=600,
         )
     except httpx.HTTPError as exc:
-        raise RuntimeError(f"Audyssey tools server unreachable at {url}: {exc}") from exc
+        raise RuntimeError(
+            f"Audyssey tools server unreachable at {url}: {exc}"
+        ) from exc
     if not 200 <= response.status_code < 300:
         try:
             detail = response.json()["detail"]

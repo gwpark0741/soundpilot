@@ -366,7 +366,9 @@ async def run_audio_generation_pipeline(
                 if track_id in previous_stems:
                     track_artifacts.append(previous_stems[track_id])
             else:
-                if method == "selsync" and _silent_in_events(artifact.path, events, fps):
+                if method == "selsync" and _silent_in_events(
+                    artifact.path, events, fps
+                ):
                     # SelSync placed no sound inside the agent's events: use t2a instead.
                     silent_track_ids.add(track_id)
                     continue
@@ -481,7 +483,9 @@ async def run_audio_generation_pipeline(
         }
         for track_id in event_track_ids:
             if track_id in event_track_failures:
-                status = TrackStatus(state="failed", error=event_track_failures[track_id])
+                status = TrackStatus(
+                    state="failed", error=event_track_failures[track_id]
+                )
             else:
                 status = TrackStatus(state="done")
             video_asset = await _set_track_status(video_asset, store, track_id, status)
@@ -554,7 +558,9 @@ async def run_event_audio_regeneration_pipeline(
         if timeline is None:
             raise ValueError("No sound timeline found in video asset.")
 
-        event, track = _event_context(timeline.sound_events, timeline.sound_tracks, sound_event_id)
+        event, track = _event_context(
+            timeline.sound_events, timeline.sound_tracks, sound_event_id
+        )
         next_description = description.strip()
         if not next_description:
             raise ValueError("Audio prompt is required.")
@@ -638,7 +644,10 @@ async def run_event_audio_regeneration_pipeline(
             return
         # Short top-bar copy; the detail stays in the track's status.
         await _set_track_status(
-            video_asset, store, track.sound_track_id, TrackStatus(state="failed", error=str(exc))
+            video_asset,
+            store,
+            track.sound_track_id,
+            TrackStatus(state="failed", error=str(exc)),
         )
         await store.set_error(f"{track.label} failed. Previous audio kept.")
 
@@ -656,7 +665,11 @@ async def run_track_regeneration_pipeline(
         if timeline is None:
             raise ValueError("No sound timeline found in video asset.")
         track = next(
-            (t for t in timeline.sound_tracks if str(t.sound_track_id) == sound_track_id),
+            (
+                t
+                for t in timeline.sound_tracks
+                if str(t.sound_track_id) == sound_track_id
+            ),
             None,
         )
         if track is None:
@@ -716,8 +729,9 @@ async def run_track_regeneration_pipeline(
                 )
                 new_stems, new_events = [artifact], []
             else:
-                new_stems, new_events = [], await _generate_track_event_artifacts(
-                    video_asset, track
+                new_stems, new_events = (
+                    [],
+                    await _generate_track_event_artifacts(video_asset, track),
                 )
         except Exception as exc:  # noqa: BLE001 - keep previous audio, surface error.
             # Failed switch: keep the edited description but restore the model.
@@ -735,7 +749,10 @@ async def run_track_regeneration_pipeline(
                 }
             )
             await _set_track_status(
-                video_asset, store, track_id, TrackStatus(state="failed", error=str(exc))
+                video_asset,
+                store,
+                track_id,
+                TrackStatus(state="failed", error=str(exc)),
             )
             # Short top-bar copy; the detail stays in TrackStatus.error.
             await store.set_error(f"{track.label} failed. Previous audio kept.")
@@ -744,7 +761,9 @@ async def run_track_regeneration_pipeline(
         separated = dict(video_asset.separated_stem_paths)
         if route == "separate":
             separated[track_id] = new_stems[0].path
-        timeline = reset_clips(timeline, {track_id})  # new audio: drop the old trim/move
+        timeline = reset_clips(
+            timeline, {track_id}
+        )  # new audio: drop the old trim/move
         video_asset = video_asset.model_copy(
             update={"separated_stem_paths": separated, "sound_timeline": timeline}
         )
@@ -752,7 +771,8 @@ async def run_track_regeneration_pipeline(
         # The user chose the model, so a silent SelSync result is kept (no paid fallback) and flagged.
         status = (
             TrackStatus(state="failed", error=SELSYNC_SILENT_MESSAGE)
-            if route == "selsync" and _silent_in_events(new_stems[0].path, events, video_asset.fps)
+            if route == "selsync"
+            and _silent_in_events(new_stems[0].path, events, video_asset.fps)
             else TrackStatus(state="done")
         )
         video_asset = await _set_track_status(video_asset, store, track_id, status)
@@ -813,7 +833,9 @@ async def run_audio_mode_switch(
     stage = f"Audio mode: {mode.capitalize()}"
     timeline = video_asset.sound_timeline
     track_ids = {t.sound_track_id for t in timeline.sound_tracks} if timeline else set()
-    if timeline and any(a.sound_track_id in track_ids for a in video_asset.sound_track_audio_artifacts):
+    if timeline and any(
+        a.sound_track_id in track_ids for a in video_asset.sound_track_audio_artifacts
+    ):
         try:
             await store.set_running(stage="mixing audio")
             audio_plan = build_audio_plan(
@@ -823,7 +845,9 @@ async def run_audio_mode_switch(
                 video_asset, audio_plan, video_asset.sound_event_audio_artifacts, store
             )
         except Exception:  # noqa: BLE001 - the switch itself succeeded; the preview stays cleared.
-            logging.getLogger(__name__).exception("Preview rebuild after the mode switch failed")
+            logging.getLogger(__name__).exception(
+                "Preview rebuild after the mode switch failed"
+            )
     await store.set_complete_asset(video_asset, stage=stage)
 
 
@@ -903,12 +927,16 @@ async def run_separation_planning_pipeline(
         timeline, dropped = await asyncio.to_thread(plan_separation, video_asset)
         if not timeline.sound_tracks:
             reasons = "; ".join(i.message for i in dropped)
-            raise ValueError("No audible sources were found." + (f" {reasons}" if reasons else ""))
+            raise ValueError(
+                "No audible sources were found." + (f" {reasons}" if reasons else "")
+            )
         # The planned timeline is stored as the inactive one, then swapped in.
         video_asset = switch_audio_mode(
             video_asset.model_copy(update={"inactive_timeline": timeline}), "separate"
         )
-        await store.set_complete_asset(video_asset, stage=stage_summary(timeline, dropped))
+        await store.set_complete_asset(
+            video_asset, stage=stage_summary(timeline, dropped)
+        )
     except Exception as exc:  # noqa: BLE001 - UI needs stage-specific failure text.
         logging.getLogger(__name__).exception("Separation planning failed")
         await store.set_error(f"Could not plan the separation: {exc}")
@@ -1020,8 +1048,13 @@ async def _generate_track_event_artifacts(
         for item in items:
             event, item_track = context[item.item_id]
             artifact = await _generate_event_audio_artifact(
-                item, event, item_track, staging,
-                video_id=None, fps=video_asset.fps, server_url=None,
+                item,
+                event,
+                item_track,
+                staging,
+                video_id=None,
+                fps=video_asset.fps,
+                server_url=None,
             )
             if artifact is None:
                 raise ValueError("No audio file was generated.")
@@ -1110,7 +1143,9 @@ async def _rebuild_audio_outputs(
     ]
 
     plan_item_ids = {
-        item.item_id for item in audio_plan.items if item.track_id not in track_level_ids
+        item.item_id
+        for item in audio_plan.items
+        if item.track_id not in track_level_ids
     }
     kept_event_artifacts = [
         item
@@ -1143,7 +1178,9 @@ async def _rebuild_audio_outputs(
         items = track_items.get(str(track.sound_track_id), [])
         if not items:
             continue
-        track_path = _track_audio_path(track_dir, str(track.sound_track_id), track.label)
+        track_path = _track_audio_path(
+            track_dir, str(track.sound_track_id), track.label
+        )
         stem_path = await asyncio.to_thread(
             mix_audio_items_to_wav,
             items,
@@ -1342,9 +1379,7 @@ def _convert_audio_to_wav(input_path: Path, output_path: Path) -> Path | None:
 # Quietest per-frame peak inside the events that still counts as audible; the samurai
 # clip's missed sword stems peak at -78 to -42 dB, its audible armor stem at -26 dB.
 SELSYNC_SILENCE_DB = -35.0
-SELSYNC_SILENT_MESSAGE = (
-    "SelSync returned silence in the event spans. Regenerate to try another seed or switch the model."
-)
+SELSYNC_SILENT_MESSAGE = "SelSync returned silence in the event spans. Regenerate to try another seed or switch the model."
 
 
 def _silent_in_events(path: Path, events: list[SoundEvent], fps: float) -> bool:

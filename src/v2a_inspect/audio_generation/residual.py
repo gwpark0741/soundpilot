@@ -15,7 +15,9 @@ def _read_mono_float(path: Path) -> np.ndarray:
     return samples.mean(axis=1) if samples.ndim > 1 else samples
 
 
-def compute_residual(original_path: Path, stem_paths: list[Path], out_path: Path) -> Path:
+def compute_residual(
+    original_path: Path, stem_paths: list[Path], out_path: Path
+) -> Path:
     """Write ``original - sum(stems)`` as 48 kHz mono float32 WAV.
 
     Each stem is subtracted over the overlapping length only; the output keeps

@@ -10,7 +10,9 @@ from scipy.io import wavfile
 from v2a_inspect.models import SoundTrack
 
 MIN_CLIP_SEC = 0.1
-FADE_SEC = 0.005  # linear fade at both ends of the placed piece, so a hard cut does not click
+FADE_SEC = (
+    0.005  # linear fade at both ends of the placed piece, so a hard cut does not click
+)
 
 
 def resolve_clip(track: SoundTrack, stem_duration: float) -> tuple[float, float, float]:

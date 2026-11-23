@@ -249,7 +249,9 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         method: Annotated[Literal["separate", "generate", "selsync"], Form()],
         description: Annotated[str | None, Form()] = None,
         seed: Annotated[int | None, Form()] = None,
-        events: Annotated[str | None, Form()] = None,  # JSON [{sound_event_id, start_frame, end_frame}]
+        events: Annotated[
+            str | None, Form()
+        ] = None,  # JSON [{sound_event_id, start_frame, end_frame}]
     ) -> dict[str, object]:
         snapshot = await store.snapshot()
         if snapshot.status == "running":
@@ -258,7 +260,9 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         if asset is None:
             raise HTTPException(status_code=404, detail="No video asset loaded")
         tracks = asset.sound_timeline.sound_tracks if asset.sound_timeline else []
-        track = next((t for t in tracks if str(t.sound_track_id) == sound_track_id), None)
+        track = next(
+            (t for t in tracks if str(t.sound_track_id) == sound_track_id), None
+        )
         if track is None:
             raise HTTPException(status_code=404, detail="Sound track not found")
         if events:
@@ -312,7 +316,9 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         track = next(
-            t for t in updated.sound_timeline.sound_tracks if t.sound_track_id == track_id
+            t
+            for t in updated.sound_timeline.sound_tracks
+            if t.sound_track_id == track_id
         )
         background_tasks.add_task(run_track_clip_pipeline, updated, store)
         await store.publish_asset_mutation(updated, stage="queued track audio edit")
@@ -426,7 +432,9 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         background_tasks.add_task(
             run_residual_toggle_pipeline, snapshot.asset, store, enabled
         )
-        await store.publish_asset_mutation(snapshot.asset, stage="queued residual update")
+        await store.publish_asset_mutation(
+            snapshot.asset, stage="queued residual update"
+        )
         return {"status": "queued"}
 
     @router.get("/api/rows/timeline")

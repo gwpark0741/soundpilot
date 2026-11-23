@@ -25,7 +25,14 @@ from uuid import UUID
 import numpy as np
 from google import genai
 from google.genai import errors, types
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 from scipy.io import wavfile
 from scipy.signal import resample_poly
 
@@ -45,7 +52,9 @@ from v2a_inspect.visualization.masks import decode_mask_ref
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "planning-evidence-v3"  # Audyssey src/audyssey/tools/planning/prompts.py
+PROMPT_VERSION = (
+    "planning-evidence-v3"  # Audyssey src/audyssey/tools/planning/prompts.py
+)
 MAX_PLAN_ROUNDS = 2
 CONTEXT_S = 0.5
 CLIP_SIZE = 512
@@ -76,7 +85,9 @@ is a source with visual_hint=null; one dog barking three times is one source wit
 three spans. Do not invent missing music, ambience, dialogue, or effects.
 """
 
-_PLANNER_EVIDENCE = "The video includes its audio track; use both audible and visual evidence.\n"
+_PLANNER_EVIDENCE = (
+    "The video includes its audio track; use both audible and visual evidence.\n"
+)
 
 _VALIDATOR_PROMPT = (
     "You verify one planned sound source, not the quality of a separated track.\n"
@@ -182,7 +193,9 @@ class _Gemini:
     def media(self, data: bytes, mime_type: str) -> types.Part:
         if len(data) <= _MAX_INLINE:
             return types.Part.from_bytes(data=data, mime_type=mime_type)
-        file = self.client.files.upload(file=io.BytesIO(data), config={"mime_type": mime_type})
+        file = self.client.files.upload(
+            file=io.BytesIO(data), config={"mime_type": mime_type}
+        )
         self._uploaded.append(file.name or "")
         # ponytail: fixed 1 s poll capped at 2 min.
         for _ in range(120):
@@ -192,7 +205,9 @@ class _Gemini:
             file = self.client.files.get(name=file.name)
         if file.state != types.FileState.ACTIVE:
             raise RuntimeError(f"gemini file {file.name} is {file.state}")
-        return types.Part(file_data=types.FileData(file_uri=file.uri, mime_type=mime_type))
+        return types.Part(
+            file_data=types.FileData(file_uri=file.uri, mime_type=mime_type)
+        )
 
     def ask(
         self, system: str, parts: list[types.Part], response_type: type[_Response]
@@ -286,7 +301,9 @@ def read_stereo(raw_video: Path, out: Path) -> np.ndarray:
         capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
-        raise RuntimeError(f"Could not read the original audio: {result.stderr.strip()}")
+        raise RuntimeError(
+            f"Could not read the original audio: {result.stderr.strip()}"
+        )
     return wavfile.read(out)[1].astype(np.float32)
 
 
@@ -375,7 +392,9 @@ def _audio_parts(
     """Context windows as 16 kHz PCM16 WAV; stereo is kept to avoid phase cancellation."""
     parts: list[types.Part] = []
     for start, end in windows:
-        data = resample_poly(samples[round(start * 48000) : round(end * 48000)], 1, 3, axis=0)
+        data = resample_poly(
+            samples[round(start * 48000) : round(end * 48000)], 1, 3, axis=0
+        )
         output = io.BytesIO()
         with wave.open(output, "wb") as stream:
             stream.setnchannels(data.shape[1])
@@ -390,7 +409,9 @@ def _audio_parts(
 
 
 def _issue(source: SourcePlan, kind: str, message: str) -> PlanIssue:
-    return PlanIssue(source_name=source.name, kind=kind, message=f"{source.name}: {message}")
+    return PlanIssue(
+        source_name=source.name, kind=kind, message=f"{source.name}: {message}"
+    )
 
 
 def validate_plan(
@@ -401,7 +422,9 @@ def validate_plan(
     for source in plans:
         windows = validation_windows(source, duration, CONTEXT_S)
         if not windows:
-            issues.append(_issue(source, "span_out_of_range", "no valid validation interval"))
+            issues.append(
+                _issue(source, "span_out_of_range", "no valid validation interval")
+            )
             continue
         targets = [(s.start, s.end) for s in source.spans] or [(0.0, duration)]
         loudest = max(
@@ -409,7 +432,9 @@ def validate_plan(
             for a, b in targets
         )
         if loudest <= np.finfo(np.float32).eps:
-            issues.append(_issue(source, "not_found", "target intervals are digitally silent"))
+            issues.append(
+                _issue(source, "not_found", "target intervals are digitally silent")
+            )
             continue
         text = json.dumps(
             {
@@ -425,20 +450,35 @@ def validate_plan(
             check = llm.ask(_VALIDATOR_PROMPT, parts, _Check)
         except _InvalidJSON:
             issues.append(
-                _issue(source, "validation_error", "validator returned invalid JSON twice; plan is not validated")
+                _issue(
+                    source,
+                    "validation_error",
+                    "validator returned invalid JSON twice; plan is not validated",
+                )
             )
             continue
         if check.status == "unsupported":
             kind = "not_found"
-        elif check.status == "uncertain" or check.evidence not in {"audio", "audio_visual"}:
+        elif check.status == "uncertain" or check.evidence not in {
+            "audio",
+            "audio_visual",
+        }:
             kind = "validation_uncertain"
         else:
             continue
-        issues.append(_issue(source, kind, check.reason or "insufficient evidence in target intervals"))
+        issues.append(
+            _issue(
+                source,
+                kind,
+                check.reason or "insufficient evidence in target intervals",
+            )
+        )
     return issues
 
 
-def to_timeline(plans: list[SourcePlan], *, fps: int, frame_count: int) -> SoundTimeline:
+def to_timeline(
+    plans: list[SourcePlan], *, fps: int, frame_count: int
+) -> SoundTimeline:
     """One SoundSource + SoundTrack per planned source, one SoundEvent per span."""
     sources, tracks, events = [], [], []
     for item in plans:
@@ -451,7 +491,9 @@ def to_timeline(plans: list[SourcePlan], *, fps: int, frame_count: int) -> Sound
         )
         source = SoundSource(source_type=source_type, label=item.name)
         track = SoundTrack(
-            track_type={"dialogue": "speech", "ambience": "ambience"}.get(item.kind, "sfx"),
+            track_type={"dialogue": "speech", "ambience": "ambience"}.get(
+                item.kind, "sfx"
+            ),
             label=item.name,
             description=item.description,
             sound_source_id=source.sound_source_id,
@@ -469,12 +511,16 @@ def to_timeline(plans: list[SourcePlan], *, fps: int, frame_count: int) -> Sound
                     end_frame_index=last,
                     description=item.description,
                     # ponytail: speech events need text; separated dialogue has no transcript, so the description stands in.
-                    spoken_text=item.description if track.track_type == "speech" else None,
+                    spoken_text=item.description
+                    if track.track_type == "speech"
+                    else None,
                 )
             )
         sources.append(source)
         tracks.append(track)
-    timeline = SoundTimeline(sound_sources=sources, sound_tracks=tracks, sound_events=events)
+    timeline = SoundTimeline(
+        sound_sources=sources, sound_tracks=tracks, sound_events=events
+    )
     return route_tracks(timeline, mode="separate", has_audio=True)  # fills agent_model
 
 
@@ -502,7 +548,10 @@ def _point_box(point: SceneTrackPoint, frame_size: tuple[int, int]) -> Box | Non
 
 def _words(text: str) -> list[str]:
     """Lowercase words with a plural "s" dropped ("Clashing swords" -> clashing, sword)."""
-    return [w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in re.findall(r"[a-z]+", text.lower())]
+    return [
+        w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+        for w in re.findall(r"[a-z]+", text.lower())
+    ]
 
 
 def _iou(a: Box, b: Box) -> float:
@@ -531,8 +580,14 @@ def link_visual_objects(
     was built from (same order).
     """
     hinted = sum(p.visual_hint is not None for p in plans)
-    if identity is None or not scene_tracks or len(plans) != len(timeline.sound_sources):
-        log.info("separation link: no tracking data, 0/%d hinted sources linked", hinted)
+    if (
+        identity is None
+        or not scene_tracks
+        or len(plans) != len(timeline.sound_sources)
+    ):
+        log.info(
+            "separation link: no tracking data, 0/%d hinted sources linked", hinted
+        )
         return timeline
     object_of: dict[UUID, UUID] = {}
     head_of: dict[UUID, str] = {}
@@ -553,21 +608,35 @@ def link_visual_objects(
             if track.scene_track_id not in object_of:
                 continue
             near = sorted(
-                (p for p in track.points if abs(p.frame_index - frame) <= _LINK_FRAME_SLACK),
+                (
+                    p
+                    for p in track.points
+                    if abs(p.frame_index - frame) <= _LINK_FRAME_SLACK
+                ),
                 key=lambda p: abs(p.frame_index - frame),
             )
-            box = next((b for b in (_point_box(p, frame_size) for p in near) if b), None)
+            box = next(
+                (b for b in (_point_box(p, frame_size) for p in near) if b), None
+            )
             if box is not None:
                 boxes.append((box, track))
         cx, cy = (hint.box[0] + hint.box[2]) / 2, (hint.box[1] + hint.box[3]) / 2
         # An object the source name names ("Clashing swords" -> "sword") wins over a bigger box
         # next to it; thin objects like blades lose on IoU to the body holding them.
         named_words = set(_words(item.name))
-        named = [(b, t) for b, t in boxes if head_of[object_of[t.scene_track_id]] in named_words]
+        named = [
+            (b, t)
+            for b, t in boxes
+            if head_of[object_of[t.scene_track_id]] in named_words
+        ]
         if named:
             best = max(
                 named,
-                key=lambda bt: (_iou(hint.box, bt[0]), -abs((bt[0][0] + bt[0][2]) / 2 - cx) - abs((bt[0][1] + bt[0][3]) / 2 - cy)),
+                key=lambda bt: (
+                    _iou(hint.box, bt[0]),
+                    -abs((bt[0][0] + bt[0][2]) / 2 - cx)
+                    - abs((bt[0][1] + bt[0][3]) / 2 - cy),
+                ),
             )[1]
         elif named_words & set(head_of.values()):
             best = None  # the named object exists but is not tracked at the hint time; never link another kind
@@ -575,12 +644,18 @@ def link_visual_objects(
             scored = [(_iou(hint.box, box), track) for box, track in boxes]
             best_iou, best = max(scored, key=lambda x: x[0], default=(0.0, None))
             if best is None or best_iou < _LINK_IOU:
-                inside = [t for b, t in boxes if b[0] <= cx <= b[2] and b[1] <= cy <= b[3]]
+                inside = [
+                    t for b, t in boxes if b[0] <= cx <= b[2] and b[1] <= cy <= b[3]
+                ]
                 best = inside[0] if len(inside) == 1 else None
         if best is not None:
-            sources[-1] = source.model_copy(update={"visual_object_id": object_of[best.scene_track_id]})
+            sources[-1] = source.model_copy(
+                update={"visual_object_id": object_of[best.scene_track_id]}
+            )
             linked += 1
-    log.info("separation link: %d/%d hinted sources linked to visual objects", linked, hinted)
+    log.info(
+        "separation link: %d/%d hinted sources linked to visual objects", linked, hinted
+    )
     return timeline.model_copy(update={"sound_sources": sources})
 
 
@@ -599,7 +674,9 @@ def _plan_rounds(
         issues += validate_plan(llm, samples, candidates, duration)
         failed = {i.source_name for i in issues}
         accepted += [p for p in candidates if p.name not in failed]
-        dropped = {n: i for n, i in dropped.items() if n not in {p.name for p in accepted}}
+        dropped = {
+            n: i for n, i in dropped.items() if n not in {p.name for p in accepted}
+        }
         dropped.update({i.source_name: i for i in issues})
         if not issues:
             break
@@ -621,17 +698,23 @@ def plan_separation(
     """Plan the audible sources of the raw video; returns the timeline and the dropped sources."""
     raw = video_asset.raw_video_path
     if raw is None or not raw.exists():
-        raise ValueError("The original video is missing, so the audio cannot be planned.")
+        raise ValueError(
+            "The original video is missing, so the audio cannot be planned."
+        )
     with _client(llm) as llm, TemporaryDirectory() as tmp:
         started = time.monotonic()
-        clip = llm.media(planner_clip(raw, Path(tmp) / "clip.mp4").read_bytes(), "video/mp4")
+        clip = llm.media(
+            planner_clip(raw, Path(tmp) / "clip.mp4").read_bytes(), "video/mp4"
+        )
         samples = read_stereo(raw, Path(tmp) / "audio.wav")
         accepted, dropped = _plan_rounds(llm, clip, samples, video_asset.duration_sec)
         log.info(
             "separation plan (%s): %d sources, %d dropped, %.1fs, usage %s",
             llm.model, len(accepted), len(dropped), time.monotonic() - started, llm.usage,
         )  # fmt: skip
-    timeline = to_timeline(accepted, fps=video_asset.fps, frame_count=video_asset.frame_count)
+    timeline = to_timeline(
+        accepted, fps=video_asset.fps, frame_count=video_asset.frame_count
+    )
     try:
         timeline = link_visual_objects(
             timeline,
@@ -647,12 +730,17 @@ def plan_separation(
     return timeline, dropped
 
 
-def switch_audio_mode(video_asset: VideoAsset, mode: Literal["generate", "separate"]) -> VideoAsset:
+def switch_audio_mode(
+    video_asset: VideoAsset, mode: Literal["generate", "separate"]
+) -> VideoAsset:
     """Swap the generate and separation timelines; the preview belongs to the old mode."""
     active, other = video_asset.inactive_timeline, video_asset.sound_timeline
     if active is None and mode == "generate" and other is not None:
         # ponytail: older bundle with no stored generate timeline; keep its tracks, rerouted.
-        active, other = route_tracks(other, mode=mode, has_audio=video_asset.has_audio), None
+        active, other = (
+            route_tracks(other, mode=mode, has_audio=video_asset.has_audio),
+            None,
+        )
     return video_asset.model_copy(
         update={
             "audio_mode": mode,
