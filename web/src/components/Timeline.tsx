@@ -3,6 +3,7 @@ import Icon, { STATUS_ICON } from "./Icon";
 import type { ObjectLane } from "../lib/objects";
 import { clipPeaks, clipPlacement, dragClip, isFullClip, resolveClip, type Clip, type ClipDrag } from "../lib/clip";
 import { methodLabel, objectColor, statusView } from "../lib/selection";
+import { dragSpan, drawSpan, minSpanFrames, removeSpan, sortSpans, type Span, type SpanDrag } from "../lib/span";
 import type {
   AudioTrackArtifact,
   SoundTrack,
@@ -39,6 +40,9 @@ interface TimelineProps {
   // Commits one finished clip drag; the timeline keeps showing the dragged clip until it settles.
   onEditClip?: (soundTrackId: string, clip: Clip) => Promise<void> | void;
   onAddTrack?: () => void;
+  // The spans of the new track being drafted, drawn on their own lane below the sound lanes.
+  draftSpans?: Span[];
+  onDraftSpansChange?: (spans: Span[]) => void;
 }
 
 type EditMode = "spans" | "audio";
@@ -63,9 +67,19 @@ interface LaneGroup {
   rows: TimelineRow[];
 }
 
+interface ActiveDraftDrag {
+  mode: SpanDrag | "draw";
+  index: number;
+  startX: number;
+  laneLeft: number;
+  laneWidth: number;
+  spans: Span[];
+  latest: Span[];
+}
+
 interface ActiveDrag {
   soundEventId: string;
-  mode: "move" | "resize-left" | "resize-right";
+  mode: SpanDrag;
   startX: number;
   laneWidth: number;
   startFrame: number;
@@ -97,6 +111,8 @@ export default function Timeline({
   trackBlockedReason = null,
   onEditClip,
   onAddTrack,
+  draftSpans,
+  onDraftSpansChange,
 }: TimelineProps) {
   const [editMode, setEditMode] = useState<EditMode>("spans");
   const [clipDraft, setClipDraft] = useState<{ soundTrackId: string; clip: Clip } | null>(null);
@@ -105,6 +121,7 @@ export default function Timeline({
   const [objectsOpen, setObjectsOpen] = useState<boolean | null>(null);
   const showObjects = objectsOpen ?? (appRunning || soundTracks.length === 0);
   const dragRef = useRef<ActiveDrag | null>(null);
+  const draftDragRef = useRef<ActiveDraftDrag | null>(null);
   const audioByTrack = useMemo(
     () => new Map(audioTracks.map((item) => [item.sound_track_id, item])),
     [audioTracks],
@@ -121,42 +138,55 @@ export default function Timeline({
   }
 
   // The window listeners are added once; they read the latest props from here.
-  const latestRef = useRef({ onEditSoundEvent, timelineEndFrame });
-  latestRef.current = { onEditSoundEvent, timelineEndFrame };
+  const latestRef = useRef({ onEditSoundEvent, onDraftSpansChange, timelineEndFrame, fps });
+  latestRef.current = { onEditSoundEvent, onDraftSpansChange, timelineEndFrame, fps };
 
   useEffect(() => {
     function handlePointerMove(event: globalThis.PointerEvent) {
+      const { onEditSoundEvent, onDraftSpansChange, timelineEndFrame, fps } = latestRef.current;
+      const framesAt = (pixels: number, laneWidth: number) =>
+        Math.round((pixels / Math.max(laneWidth, 1)) * timelineEndFrame);
+      const draft = draftDragRef.current;
+      if (draft && onDraftSpansChange) {
+        const min = minSpanFrames(fps);
+        draft.latest =
+          draft.mode === "draw"
+            ? drawSpan(
+                draft.spans,
+                framesAt(draft.startX - draft.laneLeft, draft.laneWidth),
+                framesAt(event.clientX - draft.laneLeft, draft.laneWidth),
+                timelineEndFrame,
+                min,
+              )
+            : draft.spans.map((span, index) =>
+                index === draft.index
+                  ? dragSpan(draft.mode as SpanDrag, span, framesAt(event.clientX - draft.startX, draft.laneWidth), timelineEndFrame, min)
+                  : span,
+              );
+        onDraftSpansChange(draft.latest);
+        return;
+      }
       const drag = dragRef.current;
-      const { onEditSoundEvent, timelineEndFrame } = latestRef.current;
       if (!drag || !onEditSoundEvent) {
         return;
       }
-      const deltaFrames = Math.round(
-        ((event.clientX - drag.startX) / Math.max(drag.laneWidth, 1)) *
-          timelineEndFrame,
+      const next = dragSpan(
+        drag.mode,
+        { start_frame: drag.startFrame, end_frame: drag.endFrame },
+        framesAt(event.clientX - drag.startX, drag.laneWidth),
+        timelineEndFrame,
       );
-      const length = Math.max(1, drag.endFrame - drag.startFrame);
-      let nextStart = drag.startFrame;
-      let nextEnd = drag.endFrame;
-
-      if (drag.mode === "resize-left") {
-        nextStart = clamp(drag.startFrame + deltaFrames, 0, drag.endFrame - 1);
-      } else if (drag.mode === "resize-right") {
-        nextEnd = clamp(drag.endFrame + deltaFrames, drag.startFrame + 1, timelineEndFrame);
-      } else {
-        nextStart = clamp(
-          drag.startFrame + deltaFrames,
-          0,
-          Math.max(0, timelineEndFrame - length),
-        );
-        nextEnd = nextStart + length;
-      }
-
-      onEditSoundEvent(drag.soundEventId, nextStart, nextEnd);
+      onEditSoundEvent(drag.soundEventId, next.start_frame, next.end_frame);
     }
 
     function handlePointerUp() {
       dragRef.current = null;
+      const draft = draftDragRef.current;
+      draftDragRef.current = null;
+      // Spans stay in drag order while one is being drawn or moved; they are put in time order when it ends.
+      if (draft && draft.latest !== draft.spans) {
+        latestRef.current.onDraftSpansChange?.(sortSpans(draft.latest));
+      }
     }
 
     window.addEventListener("pointermove", handlePointerMove);
@@ -227,6 +257,28 @@ export default function Timeline({
     } finally {
       setClipDraft(null);
     }
+  }
+
+  // mode "draw" starts on the empty lane, the others on a span's body or edge handle.
+  function startDraftDrag(event: PointerEvent<HTMLElement>, mode: SpanDrag | "draw", index = -1) {
+    const lane = event.currentTarget.closest(".lane-track");
+    if (!(lane instanceof HTMLElement) || !draftSpans) {
+      return;
+    }
+    const rect = lane.getBoundingClientRect();
+    const handle = event.target instanceof HTMLElement ? event.target.dataset.handle : undefined;
+    draftDragRef.current = {
+      mode: mode === "draw" ? mode : handle === "left" ? "resize-left" : handle === "right" ? "resize-right" : "move",
+      index,
+      startX: event.clientX,
+      laneLeft: rect.left,
+      laneWidth: rect.width,
+      spans: draftSpans,
+      latest: draftSpans,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   function startSoundEventEdit(
@@ -328,10 +380,7 @@ export default function Timeline({
                   </div>
                   <div className="lane-track" onPointerDown={selectFrame}>
                     {object.bars.map((bar, index) => {
-                      const style = barStyle(
-                        { ...bar, lane: object.key, label: object.label, kind: "track" },
-                        timelineEndFrame,
-                      );
+                      const style = barStyle(bar, timelineEndFrame);
                       return (
                         <span
                           className="ob"
@@ -490,12 +539,53 @@ export default function Timeline({
           );
         })
       )}
+      {draftSpans ? (
+        <div className="lane draft">
+          <div className="lane-head">
+            <span className="lh-name">
+              <span aria-hidden="true" className="sw sw-none" />
+              New track
+            </span>
+          </div>
+          <div
+            aria-label="New track spans"
+            className="lane-track"
+            onPointerDown={(event) => startDraftDrag(event, "draw")}
+            role="group"
+            title="Drag to add a span"
+          >
+            {draftSpans.map((span, index) => {
+              const bar = barStyle(span, timelineEndFrame);
+              return (
+                <button
+                  aria-label={`New track span ${index + 1}, frames ${span.start_frame} to ${span.end_frame}`}
+                  className="ev"
+                  key={index}
+                  onDoubleClick={() => onDraftSpansChange?.(removeSpan(draftSpans, index))}
+                  onPointerDown={(event) => startDraftDrag(event, "move", index)}
+                  style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
+                  tabIndex={-1}
+                  title="Drag to move; drag an edge to resize; double-click to remove"
+                  type="button"
+                >
+                  <span aria-hidden="true" className="ev-handle ev-handle-left" data-handle="left" />
+                  <span aria-hidden="true" className="ev-handle ev-handle-right" data-handle="right" />
+                </button>
+              );
+            })}
+            <span className="playhead" style={{ left: playheadLeft }} />
+          </div>
+        </div>
+      ) : null}
       {onAddTrack ? (
         <div className="tl-add">
           <button
             className="btn sm"
             disabled={trackBlockedReason !== null}
-            onClick={onAddTrack}
+            onClick={() => {
+              setEditMode("spans"); // the draft lane is edited like spans, not like audio clips
+              onAddTrack();
+            }}
             title={trackBlockedReason ?? undefined}
             type="button"
           >
@@ -620,7 +710,7 @@ function maxRowEnd(rows: TimelineRow[]): number {
 }
 
 function barStyle(
-  row: TimelineRow,
+  row: { start_frame: number; end_frame: number },
   timelineEndFrame: number,
 ): { left: number; width: number } {
   const start = clamp(row.start_frame, 0, timelineEndFrame);

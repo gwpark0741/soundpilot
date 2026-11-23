@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import AddTrackDialog from "./AddTrackDialog";
+import NewTrackPanel from "./NewTrackPanel";
 import OpenVideoDialog from "./OpenVideoDialog";
 import Timeline from "./Timeline";
 import SelectedTrackPanel from "./SelectedTrackPanel";
@@ -9,6 +9,8 @@ import Stage from "./Stage";
 import TopBar from "./TopBar";
 import { fetchAssetForExport, fetchTrackingWindow, type NewTrack } from "../api";
 import { isFullClip, type Clip } from "../lib/clip";
+import { newTrackSpan } from "../lib/newTrack";
+import { removeSpan, type Span } from "../lib/span";
 import { reapplyPending, trackEventSpans, withoutEvents, type EventSpan, type PendingSpans } from "../lib/pendingEdits";
 import { buildObjects } from "../lib/objects";
 import { trackWindowNeedsFetch } from "../lib/trackWindow";
@@ -91,8 +93,9 @@ export default function VideoEditor({
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [soloTrackId, setSoloTrackId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [addTrackOpen, setAddTrackOpen] = useState(false);
-  // A track just added from the dialog is selected as soon as it shows up in the timeline.
+  // Spans of the new track being drafted (local only); null when there is no draft.
+  const [draftSpans, setDraftSpans] = useState<Span[] | null>(null);
+  // A track just added from the panel is selected as soon as it shows up in the timeline.
   const [pendingSelect, setPendingSelect] = useState<string | null>(null);
   const [serverUrl, setServerUrl] = useState("");
   const [panelError, setPanelError] = useState<string | null>(null);
@@ -225,6 +228,7 @@ export default function VideoEditor({
     setFrame(0);
     setSelectedTrackId(null);
     setSoloTrackId(null);
+    setDraftSpans(null);
     setTrackWindow(null);
     trackWindowRequestRef.current = null;
     trackWindowAssetRef.current = null;
@@ -730,6 +734,7 @@ export default function VideoEditor({
 
   async function createTrack(track: NewTrack) {
     const id = await onCreateTrack?.(track);
+    setDraftSpans(null);
     if (id) {
       setPendingSelect(id);
     }
@@ -811,10 +816,26 @@ export default function VideoEditor({
           editBlockedReason={editBlockedReason}
           trackBlockedReason={trackBlockedReason}
           onEditClip={commitClip}
-          onAddTrack={onCreateTrack && draftAsset?.sound_timeline ? () => setAddTrackOpen(true) : undefined}
+          onAddTrack={
+            onCreateTrack && draftAsset?.sound_timeline && !draftSpans
+              ? () => setDraftSpans([newTrackSpan(selectedFrame, timelineFrameCount, fps)])
+              : undefined
+          }
+          draftSpans={draftSpans ?? undefined}
+          onDraftSpansChange={setDraftSpans}
         />
         <div className="side">
-        {selectedTrack ? (
+        {draftSpans ? (
+          <NewTrackPanel
+            spans={draftSpans}
+            fps={fps}
+            hasAudio={baseAsset?.has_audio ?? false}
+            blockedReason={trackBlockedReason}
+            onRemoveSpan={(index) => setDraftSpans(removeSpan(draftSpans, index))}
+            onCancel={() => setDraftSpans(null)}
+            onCreate={createTrack}
+          />
+        ) : selectedTrack ? (
           <SelectedTrackPanel
             key={selectedTrack.sound_track_id}
             track={selectedTrack}
@@ -859,15 +880,6 @@ export default function VideoEditor({
           {selectedTrack ? `Selected: ${selectedTrack.label}` : ""}
         </p>
       </main>
-      <AddTrackDialog
-        open={addTrackOpen}
-        onClose={() => setAddTrackOpen(false)}
-        hasAudio={baseAsset?.has_audio ?? false}
-        frame={selectedFrame}
-        frameCount={timelineFrameCount}
-        fps={fps}
-        onCreate={createTrack}
-      />
       <OpenVideoDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}

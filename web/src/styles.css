@@ -188,6 +188,15 @@ h1, h2, h3, p { margin: 0; }
 .edit-mode { display: flex; align-items: center; padding: 2px 6px; }
 .edit-mode .btn { min-height: 20px; font-size: 0.75rem; padding: 0 8px; }
 .tl-add { padding: 6px 12px; }
+.lane.draft .lane-track { cursor: crosshair; background: rgba(255,255,255,.03); }
+.lane.draft .ev { border-style: dashed; }
+.nt label, .nt-spans > span { display: grid; gap: 4px; font-size: 0.75rem; color: var(--muted); }
+.nt select, .nt textarea { min-width: 0; padding: 4px 8px; background: var(--bg); border: 1px solid var(--ctl-border); border-radius: var(--r-ctl); font: inherit; font-size: 0.8125rem; color: var(--text); }
+.nt input { min-height: 32px; min-width: 0; padding: 4px 8px; background: var(--bg); border: 1px solid var(--ctl-border); border-radius: var(--r-ctl); font-size: 0.8125rem; color: var(--text); }
+.nt .hint { color: var(--muted); font-size: 0.75rem; }
+.nt-spans { display: grid; gap: 4px; }
+.nt-spans ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.nt-spans li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
 .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; margin-left: -1px; }
 
 /* spinner (motion only when allowed; the label carries the meaning) */

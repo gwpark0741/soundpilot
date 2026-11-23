@@ -24,7 +24,7 @@ test("timeline edit mode, add track and delete track controls", async (context) 
   context.after(() => server.close());
   const { default: Timeline } = await server.ssrLoadModule("/src/components/Timeline.tsx");
   const { default: Panel } = await server.ssrLoadModule("/src/components/SelectedTrackPanel.tsx");
-  const { default: AddTrackDialog } = await server.ssrLoadModule("/src/components/AddTrackDialog.tsx");
+  const { default: NewTrackPanel } = await server.ssrLoadModule("/src/components/NewTrackPanel.tsx");
   const { default: DeleteTrackDialog } = await server.ssrLoadModule("/src/components/DeleteTrackDialog.tsx");
 
   const timeline = (over = {}) =>
@@ -91,13 +91,42 @@ test("timeline edit mode, add track and delete track controls", async (context) 
   assert.match(del, /removed with its events and audio\. This cannot be undone\./);
   assert.match(del, /Cancel/);
   assert.match(del, /Delete<\/button>/);
-  const add = (hasAudio) =>
+
+  // Draft lane: only while drafting, below the sound lanes, one box per span.
+  assert.ok(!timeline().includes("New track"));
+  html = timeline({ onAddTrack() {}, draftSpans: [{ start_frame: 30, end_frame: 90 }, { start_frame: 100, end_frame: 110 }], onDraftSpansChange() {} });
+  assert.match(html, /<div class="lane draft">.*New track/);
+  assert.ok(html.indexOf("Door event") < html.indexOf("New track spans"), "below the last sound lane");
+  assert.equal((html.match(/New track span \d/g) ?? []).length, 2);
+  assert.match(html, /left:25%;width:50%/);
+  assert.match(html, /double-click to remove/);
+
+  // New track panel: fields, spans with remove buttons, hint, Cancel / Create.
+  const panelNew = (over) =>
     renderToStaticMarkup(
-      React.createElement(AddTrackDialog, { open: false, onClose() {}, hasAudio, frame: 0, frameCount: 120, fps: 30, onCreate: async () => {} }),
+      React.createElement(NewTrackPanel, {
+        spans: [{ start_frame: 69, end_frame: 123 }],
+        fps: 30,
+        hasAudio: true,
+        blockedReason: null,
+        onRemoveSpan() {},
+        onCancel() {},
+        onCreate: async () => {},
+        ...over,
+      }),
     );
-  assert.match(add(true), /Create and generate/);
-  assert.match(add(true), /Kokoro \(speech\)/);
-  assert.ok(!add(true).includes("Spoken text"), "spoken text only for Kokoro");
-  assert.match(add(false), /<option value="separate" disabled=""/);
-  assert.match(add(false), /no original audio/);
+  let np = panelNew({});
+  assert.match(np, /Name/);
+  assert.match(np, /Description/);
+  assert.match(np, /Kokoro \(speech\)/);
+  assert.match(np, /2\.3–4\.1 s/);
+  assert.match(np, /aria-label="Remove span 2\.3–4\.1 s"/);
+  assert.match(np, /Drag on the New track lane to add a span\. Drag a span to move it, or its edges to resize\./);
+  assert.match(np, />Cancel<\/button>/);
+  assert.ok(!np.includes("Spoken text"), "spoken text only for Kokoro");
+  assert.match(np, /<button[^>]*disabled=""[^>]*>Create and generate/, "empty name and description");
+  assert.match(panelNew({ hasAudio: false }), /<option value="separate" disabled=""/);
+  assert.match(panelNew({ hasAudio: false }), /no original audio/);
+  assert.match(panelNew({ spans: [] }), /<button[^>]*disabled=""[^>]*>Create and generate/);
+  assert.match(panelNew({ blockedReason: "Generation is running." }), /Generation is running\./);
 });

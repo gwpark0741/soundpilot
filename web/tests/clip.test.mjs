@@ -54,11 +54,8 @@ test("clip geometry and drag clamping", async (context) => {
   // Frame snapping: 1/30 s steps.
   assert.deepEqual(drag("move", mid, 0.05), { start: 1, end: 2, offset: 0.0667 });
 
-  // New-track default spans.
-  assert.deepEqual(n.newTrackSpan("selsync", 40, 120, 30), { start_frame: 0, end_frame: 120 });
-  assert.deepEqual(n.newTrackSpan("separate", 40, 120, 30), { start_frame: 0, end_frame: 120 });
-  assert.deepEqual(n.newTrackSpan("t2a", 40, 120, 30), { start_frame: 40, end_frame: 100 });
-  assert.deepEqual(n.newTrackSpan("tts", 100, 120, 30), { start_frame: 100, end_frame: 120 });
-  assert.deepEqual(n.newTrackSpan("tts", 119, 120, 30), { start_frame: 119, end_frame: 120 });
-  assert.deepEqual(n.newTrackSpan("t2a", 500, 120, 30), { start_frame: 119, end_frame: 120 });
+  // New-track draft span: 2 s from the playhead for every model, clamped to the video.
+  assert.deepEqual(n.newTrackSpan(40, 120, 30), { start_frame: 40, end_frame: 100 });
+  assert.deepEqual(n.newTrackSpan(100, 120, 30), { start_frame: 100, end_frame: 120 });
+  assert.deepEqual(n.newTrackSpan(500, 120, 30), { start_frame: 119, end_frame: 120 });
 });
