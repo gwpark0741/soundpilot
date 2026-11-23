@@ -60,7 +60,7 @@ export function regenerateBlockedReason(
   stage?: string | null,
 ): string | null {
   if (hasTimelineEdits) {
-    return "Unsaved timeline edits. Generate audio to apply them or discard.";
+    return "Span edits are pending. Regenerate the edited tracks or discard the edits first.";
   }
   if (status === "running") {
     const progress = stage?.match(/(\d+)\s*(?:\/|of)\s*(\d+)/);

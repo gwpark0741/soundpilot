@@ -109,7 +109,7 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   assert.equal((html({ track: track({ generation_model: "selsync" }) }).match(/Description<\/label>/g) ?? []).length, 1);
 
   // unsaved edits block Regenerate: Discard edits is offered next to the reason, not primary
-  const edits = "Unsaved timeline edits. Generate audio to apply them or discard.";
+  const edits = "Span edits are pending. Regenerate the edited tracks or discard the edits first.";
   m = html({ blockedReason: edits, hasUnsavedEdits: true, onDiscardEdits() {} });
   assert.match(m, />Discard edits</);
   assert.doesNotMatch(m, /btn primary/);
