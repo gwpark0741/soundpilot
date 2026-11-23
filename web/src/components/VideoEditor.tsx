@@ -181,6 +181,13 @@ export default function VideoEditor({
     [fps, maxFrame],
   );
 
+  // Edits that start while the asset is downloading must not be overwritten when it arrives.
+  const hasTimelineEditsRef = useRef(false);
+  hasTimelineEditsRef.current = hasTimelineEdits;
+
+  // Keyed on the store version only: the same version arrives again with a new rows array after every action
+  // (the action's own refresh plus the SSE one). asset_version is too coarse, since track status and added
+  // tracks change the asset without bumping it.
   useEffect(() => {
     if (hasTimelineEdits) {
       return;
@@ -189,7 +196,7 @@ export default function VideoEditor({
     let alive = true;
     void fetchAssetForExport()
       .then((asset) => {
-        if (!alive) {
+        if (!alive || hasTimelineEditsRef.current) {
           return;
         }
         setBaseAsset(asset);
@@ -204,7 +211,8 @@ export default function VideoEditor({
     return () => {
       alive = false;
     };
-  }, [state.timeline_rows, state.version, reloadKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.version, reloadKey]);
 
   // A new run clears the asset (and a new video replaces it): drop everything tied to the old project,
   // or a stale "unsaved edits" flag would freeze the refresh above.
@@ -221,6 +229,10 @@ export default function VideoEditor({
     setBaseAsset(null);
     setDraftAsset(null);
     setHasTimelineEdits(false);
+    if (hasTimelineEditsRef.current) {
+      // The refresh above skipped this version because of the stale edits flag; load it now.
+      setReloadKey((key) => key + 1);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId]);
 
@@ -634,7 +646,8 @@ export default function VideoEditor({
 
   async function changeAudioMode(mode: "generate" | "separate") {
     // Each mode has its own timeline, so unsaved edits to this one cannot carry over.
-    if (hasTimelineEdits && !window.confirm("Switching the audio method discards unsaved timeline edits.")) {
+    const hadEdits = hasTimelineEdits;
+    if (hadEdits && !window.confirm("Switching the audio method discards unsaved timeline edits.")) {
       return;
     }
     try {
@@ -642,9 +655,12 @@ export default function VideoEditor({
     } catch {
       return;
     }
-    // The server timeline replaces the draft: drop the edits and reload it.
+    // The server timeline replaces the draft: drop the edits and reload it. Without edits the refresh
+    // after the mode change has already loaded it.
     setHasTimelineEdits(false);
-    setReloadKey((key) => key + 1);
+    if (hadEdits) {
+      setReloadKey((key) => key + 1);
+    }
   }
 
   async function submitGenerateAudio() {

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   fetchAssetSummary,
   cleanAsset,
@@ -41,6 +41,7 @@ const emptyAsset: AssetResponse = {
 export default function App() {
   const [state, setState] = useState<AssetResponse>(emptyAsset);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const summaryRequestRef = useRef(0);
 
   useEffect(() => {
     void refreshAssetSummary();
@@ -52,8 +53,12 @@ export default function App() {
   }, []);
 
   async function refreshAssetSummary() {
+    const request = ++summaryRequestRef.current;
     const nextState = await fetchAssetSummary();
-    setState(nextState);
+    // A slower, older response must not replace a newer one.
+    if (request === summaryRequestRef.current) {
+      setState(nextState);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
