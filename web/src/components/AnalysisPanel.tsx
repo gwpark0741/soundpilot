@@ -8,13 +8,13 @@ interface AnalysisPanelProps {
   onSelectFrame: (frame: number) => void;
 }
 
-// Shown when no sound track is selected: what video analysis found, scene by scene.
+// What video analysis found, scene by scene (below the selected track in the side column).
 export default function AnalysisPanel({ scenes, fps, frame, soundTrackCount, onSelectFrame }: AnalysisPanelProps) {
   const seconds = (f: number) => (f / fps).toFixed(1);
   const objectCount = new Set(scenes.flatMap((s) => s.objects.map((o) => o.label))).size;
   const eventCount = scenes.reduce((n, s) => n + s.events.length, 0);
   return (
-    <section className="side" aria-label="Analysis">
+    <section className="side-group" aria-label="Analysis">
       <h2>Analysis</h2>
       <p className="an-sum">
         {scenes.length} scenes, {objectCount} objects, {eventCount} visual events, {soundTrackCount} sound tracks

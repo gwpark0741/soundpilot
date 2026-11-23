@@ -129,7 +129,7 @@ export default function SelectedTrackPanel({
   );
 
   return (
-    <section className="side" aria-label="Selected track">
+    <section className="side-group" aria-label="Selected track">
       <h2>Selected track</h2>
       <article className="detail sel" style={{ ["--oc" as string]: objectColor }} aria-label={track.label}>
         <div className="d-head">

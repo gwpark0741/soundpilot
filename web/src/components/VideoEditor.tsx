@@ -674,6 +674,7 @@ export default function VideoEditor({
           trackColors={trackColors}
           objectLanes={objects.lanes}
         />
+        <div className="side">
         {selectedTrack ? (
           <SelectedTrackPanel
             key={selectedTrack.sound_track_id}
@@ -700,7 +701,8 @@ export default function VideoEditor({
               void regenerateEventFromPanel(id, description, spokenText)
             }
           />
-        ) : sceneSummaries.length ? (
+        ) : null}
+        {sceneSummaries.length ? (
           <AnalysisPanel
             scenes={sceneSummaries}
             fps={fps}
@@ -709,6 +711,7 @@ export default function VideoEditor({
             onSelectFrame={selectFrame}
           />
         ) : null}
+        </div>
         <p className="sr" role="status">
           {selectedTrack ? `Selected: ${selectedTrack.label}` : ""}
         </p>
