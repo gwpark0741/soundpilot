@@ -749,9 +749,13 @@ async def run_track_regeneration_pipeline(
             update={"separated_stem_paths": separated, "sound_timeline": timeline}
         )
         video_asset = await _refresh_residual(video_asset)
-        video_asset = await _set_track_status(
-            video_asset, store, track_id, TrackStatus(state="done")
+        # The user chose the model, so a silent SelSync result is kept (no paid fallback) and flagged.
+        status = (
+            TrackStatus(state="failed", error=SELSYNC_SILENT_MESSAGE)
+            if route == "selsync" and _silent_in_events(new_stems[0].path, events, video_asset.fps)
+            else TrackStatus(state="done")
         )
+        video_asset = await _set_track_status(video_asset, store, track_id, status)
 
         # Only this track's audio changes; its old stem/events are dropped so it is
         # not mixed twice (a stem-level track keeps no events, an event-level no stem).
@@ -1338,6 +1342,9 @@ def _convert_audio_to_wav(input_path: Path, output_path: Path) -> Path | None:
 # Quietest per-frame peak inside the events that still counts as audible; the samurai
 # clip's missed sword stems peak at -78 to -42 dB, its audible armor stem at -26 dB.
 SELSYNC_SILENCE_DB = -35.0
+SELSYNC_SILENT_MESSAGE = (
+    "SelSync returned silence in the event spans. Regenerate to try another seed or switch the model."
+)
 
 
 def _silent_in_events(path: Path, events: list[SoundEvent], fps: float) -> bool:

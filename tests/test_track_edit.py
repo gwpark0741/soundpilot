@@ -503,6 +503,58 @@ class TrackEditPipelineTest(unittest.TestCase):
             self.assertIsNone(by_track[door.sound_track_id].clip_path)
             self.assertIsNotNone(by_track[wind.sound_track_id].clip_path)
 
+    def test_silent_selsync_regeneration_keeps_the_audio_and_flags_the_track(self) -> None:
+        def silent_stem(*args) -> Path:
+            wavfile.write(args[-1], RATE, np.zeros(4 * RATE, dtype=np.int16))
+            return args[-1]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, (door, _) = _asset(Path(temp_dir))
+            timeline = asset.sound_timeline
+            asset = asset.model_copy(  # SelSync only routes visual-object sources
+                update={
+                    "sound_timeline": timeline.model_copy(
+                        update={
+                            "sound_sources": [
+                                s.model_copy(update={"source_type": "visual_object"})
+                                for s in timeline.sound_sources
+                            ]
+                        }
+                    )
+                }
+            )
+            store = VideoAssetStore()
+            with (
+                patch("v2a_inspect.ui.pipeline.generate_track", side_effect=silent_stem) as gen,
+                patch("v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix),
+            ):
+                asyncio.run(
+                    run_track_regeneration_pipeline(
+                        asset, store, str(door.sound_track_id), "generate", None, 5
+                    )
+                )
+            snapshot = asyncio.run(store.snapshot())
+
+            gen.assert_called_once()  # no fallback to another model
+            self.assertEqual(snapshot.status, "complete")
+            status = snapshot.asset.track_status[door.sound_track_id]
+            self.assertEqual(status.state, "failed")
+            self.assertIn("SelSync returned silence", status.error)
+            track = snapshot.asset.sound_timeline.sound_tracks[0]
+            self.assertEqual(track.generation_model, "selsync")
+            stem = next(
+                a for a in snapshot.asset.sound_track_audio_artifacts
+                if a.sound_track_id == door.sound_track_id
+            )
+            self.assertEqual(stem.origin, "generated")  # the new audio stays
+            self.assertEqual(
+                snapshot.asset.track_status[next(
+                    t.sound_track_id for t in snapshot.asset.sound_timeline.sound_tracks
+                    if t.label == "Wind"
+                )].state,
+                "done",
+            )
+
     def test_full_generation_resets_every_clip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
