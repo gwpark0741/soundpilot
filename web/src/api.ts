@@ -1,6 +1,7 @@
 import type {
   AssetResponse,
   FullAssetResponse,
+  ProjectSummary,
   TrackWindowResponse,
   VideoAsset,
 } from "./types";
@@ -67,6 +68,30 @@ export async function importBundle(form: HTMLFormElement): Promise<void> {
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Failed to import bundle: ${response.status}`);
+  }
+}
+
+export async function fetchProjects(): Promise<ProjectSummary[]> {
+  const response = await fetch("/api/projects");
+  if (!response.ok) {
+    throw new Error(`Failed to list projects: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function openProject(id: string): Promise<void> {
+  const response = await fetch(`/api/projects/${id}/open`, { method: "POST" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to open project: ${response.status}`);
+  }
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  const response = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to delete project: ${response.status}`);
   }
 }
 

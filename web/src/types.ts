@@ -204,3 +204,17 @@ export interface TimelineRow {
   generation_model?: GenerationModel;
   spoken_text?: string | null;
 }
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  created: string;
+  updated: string;
+  duration_sec: number | null;
+  audio_mode: "generate" | "separate" | null;
+  scenes: number;
+  objects: number;
+  tracks: number;
+  has_preview: boolean;
+  status: "complete" | "running" | "failed";
+}

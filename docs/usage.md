@@ -57,6 +57,15 @@ uv run python scripts/demo_preflight.py --gpu <N> --warmup <video>
 7. **다운로드.** "Open video" > "Advanced"의 "Download video (MP4)"로 mix된 영상을, "Download edited JSON"으로 편집된 asset JSON을 받는다.
 8. **bundle 저장과 불러오기.** "Save bundle"은 project 전체를 zip으로 내려받는다. 다음에는 "Open video" > "Load a saved project"에서 zip을 올린다. 분석 없이 상태와 오디오가 복원된다.
 
+### 프로젝트 기록 (Recent projects)
+
+- 영상을 분석할 때마다 project가 서버에 자동으로 저장된다. "Open video" > "Recent projects"에 이름(업로드한 파일명), 날짜, 길이, 오디오 방식, track 수가 최신순으로 표시된다. "Open"은 저장된 상태(track, 오디오, 미리보기, 분석 패널)를 그대로 불러오고, "Delete"는 확인 후 해당 project의 파일을 모두 지운다.
+- 저장 위치는 `<V2A_INSPECT_UI_WORK_DIR>/v2a-inspect-ui/projects/<project id>/`이다. demo container에서는 `/data/work/v2a-inspect-ui/projects/`이며, `uploads/`, prepared 영상, keyframe, 오디오, `preview.mp4`가 project별 디렉터리에 따로 쌓인다. 상태는 `asset.json`(VideoAsset)과 `project.json`(목록용 meta)에 기록된다.
+- `asset.json`은 분석 완료, 분리 계획 완료, 오디오 생성·재생성·residual 변경·mode 전환 완료, bundle 불러오기 직후에 갱신된다. 실행 중에는 쓰지 않는다.
+- docker volume이 남아 있으면 container를 다시 시작해도 기록이 유지된다. volume을 지우면 기록도 함께 사라진다.
+- 분석이 끝나지 않은 project는 "Analysis did not finish"로 표시되며 Open은 비활성이고 Delete만 가능하다. 분석이 진행 중인 project는 삭제할 수 없고, 실행 중에는 Open도 막힌다.
+- bundle과의 관계: bundle은 다른 환경으로 옮기기 위한 portable zip이고, 기록은 이 서버 안의 목록이다. "Load a saved project"로 bundle을 불러오면 새 project로 기록에 추가된다. 이전 버전의 평면 구조(`v2a-inspect-ui/` 바로 아래에 저장된 파일)는 기록 목록에 나타나지 않으며 bundle로만 열 수 있다.
+
 ## 4. 라우팅 규칙
 
 Generate 모드에서 track별 모델은 다음 순서로 정해진다 (`audio_generation/routing.py`).

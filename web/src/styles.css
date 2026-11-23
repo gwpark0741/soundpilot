@@ -194,6 +194,12 @@ h1, h2, h3, p { margin: 0; }
 .dlg-sec h3 { font-size: var(--fs); font-weight: 600; }
 .dlg label { display: grid; gap: 4px; font-size: 0.75rem; color: var(--muted); }
 .dlg input:not([type=hidden]) { min-height: 32px; min-width: 0; padding: 4px 8px; background: var(--bg); border: 1px solid var(--ctl-border); border-radius: var(--r-ctl); font-size: var(--fs); color: var(--text); }
+.dlg-empty { font-size: 0.75rem; color: var(--muted); }
+.proj-list { display: grid; gap: 6px; max-height: 220px; overflow-y: auto; list-style: none; margin: 0; padding: 0; }
+.proj { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-ctl); }
+.proj-info { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.proj-name { font-size: var(--fs); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-meta { font-size: 0.75rem; color: var(--muted); }
 .dlg-adv summary { cursor: pointer; font-size: var(--fs); font-weight: 500; }
 .dlg-adv-body { display: grid; gap: 10px; margin-top: 10px; }
 .dlg-adv-body .split { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

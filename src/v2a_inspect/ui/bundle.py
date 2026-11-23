@@ -22,6 +22,10 @@ def write_bundle(asset: VideoAsset, root: Path, out: BinaryIO) -> None:
         zf.writestr("bundle.json", json.dumps({"bundle_roots": roots}))
         # ponytail: zips the whole work root (may include other uploads); filter to referenced paths if bundles get large.
         for path in sorted(root.rglob("*")):
+            rel = path.relative_to(root)
+            # Project history files are rebuilt on import; skip them (and half-written temp files).
+            if path.suffix == ".tmp" or rel.as_posix() in {"asset.json", "project.json"}:
+                continue
             if path.is_file():
                 zf.write(path, f"files/{path.relative_to(root).as_posix()}")
 

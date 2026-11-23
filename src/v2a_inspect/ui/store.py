@@ -7,6 +7,8 @@ from typing import Literal
 
 from v2a_inspect.models import VideoAsset
 
+from .projects import save_project_logged
+
 RunStatus = Literal["idle", "running", "complete", "failed"]
 
 
@@ -54,6 +56,7 @@ class VideoAssetStore:
             self._current_stage = stage
             self._error = None
             self._asset_version += 1
+            await asyncio.to_thread(save_project_logged, video_asset)
             self._bump_locked()
 
     async def publish_asset_mutation(
@@ -78,6 +81,8 @@ class VideoAssetStore:
             self._status = "complete"
             self._current_stage = stage
             self._error = None
+            if self._asset is not None:
+                await asyncio.to_thread(save_project_logged, self._asset)
             self._bump_locked()
 
     async def set_error(self, error: str, *, stage: str | None = None) -> None:

@@ -25,6 +25,8 @@ interface VideoEditorProps {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onImport: (event: FormEvent<HTMLFormElement>) => void;
   onClean: () => Promise<void> | void;
+  onOpenProject: (id: string) => Promise<void> | void;
+  onDeleteProject: (id: string) => Promise<void> | void;
   onResetSoundTimeline: () => void;
   onGenerateAudio?: (serverUrl: string, draftAsset: VideoAsset | null) => Promise<void> | void;
   onRegenerateEventAudio?: (
@@ -65,6 +67,8 @@ export default function VideoEditor({
   onSubmit,
   onImport,
   onClean,
+  onOpenProject,
+  onDeleteProject,
   onResetSoundTimeline,
   onGenerateAudio,
   onRegenerateEventAudio,
@@ -732,6 +736,8 @@ export default function VideoEditor({
         onSubmit={onSubmit}
         onImport={onImport}
         onClean={cleanWorkspace}
+        onOpenProject={onOpenProject}
+        onDeleteProject={onDeleteProject}
         onResetSoundTimeline={onResetSoundTimeline}
         canDownloadJson={!!draftAsset}
         onDownloadJson={exportEditedAsset}

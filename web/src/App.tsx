@@ -3,6 +3,8 @@ import {
   fetchAssetSummary,
   cleanAsset,
   importBundle,
+  openProject,
+  deleteProject,
   resetSoundTimeline,
   startRun,
   generateAudio,
@@ -69,6 +71,28 @@ export default function App() {
       await refreshAssetSummary();
     } catch (error) {
       setSubmitError(failure("Could not load the project.", error, "Check the bundle, then press Load again."));
+      throw error;
+    }
+  }
+
+  async function handleOpenProject(id: string) {
+    setSubmitError(null);
+    try {
+      await openProject(id);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(failure("Could not open the project.", error, "Wait for the analysis to finish, then try again."));
+      throw error;
+    }
+  }
+
+  async function handleDeleteProject(id: string) {
+    setSubmitError(null);
+    try {
+      await deleteProject(id);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(failure("Could not delete the project.", error, "Try again in a moment."));
       throw error;
     }
   }
@@ -169,6 +193,8 @@ export default function App() {
       onSubmit={handleSubmit}
       onImport={handleImport}
       onClean={handleClean}
+      onOpenProject={handleOpenProject}
+      onDeleteProject={handleDeleteProject}
       onResetSoundTimeline={handleResetSoundTimeline}
       onGenerateAudio={handleGenerateAudio}
       onRegenerateEventAudio={handleRegenerateEventAudio}

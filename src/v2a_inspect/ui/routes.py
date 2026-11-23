@@ -34,6 +34,14 @@ from .pipeline import (
     run_separation_planning_pipeline,
     run_track_regeneration_pipeline,
 )
+from .projects import (
+    list_projects,
+    load_project,
+    new_project_dir,
+    project_dir_of,
+    project_path,
+    write_meta,
+)
 from .rows import (
     current_frame_rows,
     timeline_rows,
@@ -54,6 +62,8 @@ DEFAULT_MAX_KEYFRAMES_PER_SCENE = int(
 
 def create_router(store: VideoAssetStore) -> APIRouter:
     router = APIRouter()
+    # Project the last /api/runs started; only used to label a directory without asset.json as running.
+    run_project_id: str | None = None
 
     @router.get("/api/asset")
     async def get_asset() -> dict[str, object]:
@@ -378,8 +388,12 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         if not video.filename:
             raise HTTPException(status_code=400, detail="No video filename provided")
 
-        root_dir = _root_dir(work_dir)
-        upload_path = _write_upload(root_dir, video.filename, await video.read())
+        nonlocal run_project_id
+        # Each run gets its own project directory so derived files never overwrite another project's.
+        project_dir = new_project_dir(_root_dir(work_dir))
+        write_meta(project_dir, video.filename)
+        upload_path = _write_upload(project_dir, video.filename, await video.read())
+        run_project_id = project_dir.name
 
         options = PipelineOptions(
             scene_threshold=scene_threshold,
@@ -389,11 +403,11 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         background_tasks.add_task(
             run_uploaded_video_pipeline,
             upload_path,
-            root_dir,
+            project_dir,
             store,
             options,
         )
-        # Drop the previous project from the UI right away (files stay on disk).
+        # Drop the previous project from the UI right away (it stays in the project history).
         await store.clear()
         await store.set_running(stage="queued")
         return {"status": "queued"}
@@ -486,14 +500,61 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         snapshot = await store.snapshot()
         if snapshot.status == "running":
             raise HTTPException(status_code=409, detail="Pipeline is already running")
+        nonlocal run_project_id
+        project_dir = new_project_dir(_root_dir(work_dir))
         try:
             imported_asset = await asyncio.to_thread(
-                read_bundle, bundle.file, _root_dir(work_dir)
+                read_bundle, bundle.file, project_dir
             )
         except ValueError as exc:
+            shutil.rmtree(project_dir, ignore_errors=True)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        name = Path(bundle.filename or "").stem.removesuffix("-bundle")
+        write_meta(project_dir, name or imported_asset.source_path.stem)
+        run_project_id = None
         await store.set_complete_asset(imported_asset, stage="imported bundle")
         return {"status": "imported"}
+
+    # ponytail: the project history lives under the default work dir; the per-request work_dir override is not listed.
+    @router.get("/api/projects")
+    async def get_projects() -> list[dict[str, object]]:
+        snapshot = await store.snapshot()
+        running_id = run_project_id if snapshot.status == "running" else None
+        return await asyncio.to_thread(list_projects, _root_dir(None), running_id)
+
+    @router.post("/api/projects/{project_id}/open")
+    async def open_project(project_id: str) -> dict[str, object]:
+        nonlocal run_project_id
+        path = _existing_project(project_id)
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        try:
+            asset = await asyncio.to_thread(load_project, path)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if project_dir_of(asset) != path.resolve():
+            raise HTTPException(
+                status_code=409, detail="Project files were moved; reopen from a bundle"
+            )
+        run_project_id = None
+        await store.set_complete_asset(asset, stage="opened project")
+        return {"status": "opened"}
+
+    @router.delete("/api/projects/{project_id}")
+    async def delete_project(project_id: str) -> dict[str, object]:
+        path = _existing_project(project_id)
+        snapshot = await store.snapshot()
+        current = (
+            snapshot.asset is not None
+            and project_dir_of(snapshot.asset) == path.resolve()
+        )
+        if snapshot.status == "running" and (current or run_project_id == project_id):
+            raise HTTPException(status_code=409, detail="Project is running")
+        if current:
+            await store.clear()
+        await asyncio.to_thread(shutil.rmtree, path)
+        return {"status": "deleted"}
 
     @router.post("/api/sound-timeline/reset-run")
     async def reset_sound_timeline(
@@ -603,6 +664,16 @@ def _root_dir(work_dir: str | None) -> Path:
     return root_dir
 
 
+def _existing_project(project_id: str) -> Path:
+    try:
+        path = project_path(_root_dir(None), project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Project not found") from exc
+    if not path.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found")
+    return path
+
+
 def _write_upload(root_dir: Path, filename: str, data: bytes) -> Path:
     upload_dir = root_dir / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -708,7 +779,7 @@ def _asset_work_root(asset: VideoAsset) -> Path | None:
     if root.name == "uploads":
         root = root.parent
     root = root.resolve()
-    if root.name != "v2a-inspect-ui":
+    if root.name != "v2a-inspect-ui" and root.parent.name != "projects":
         return None
     return root
 
