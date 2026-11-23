@@ -20,7 +20,7 @@ UI, inference server, Audyssey tools server를 하나의 image(`Dockerfile.runpo
 | CUDA | driver 570 이상 (CUDA 12.8 이상). 두 torch가 모두 `cu128` build이다. RunPod template의 CUDA 필터를 12.8 이상으로 둔다. |
 | Container disk | 50 GB 이상 (triton cache, 임시 영상) |
 | Network volume | 100 GB 이상, mount path `/workspace` (가중치 약 41 GB + 작업 데이터) |
-| Image | `ghcr.io/gwpark0741/soundpilot:<tag>` |
+| Image | `ghcr.io/gwpark0741/soundpilot:<tag>`. `demo-20261123`은 sv3에서 build하고 GPU에서 end to end로 검증한 시연용 image이다. `latest`와 `<commit sha>`는 main에 merge될 때마다 GitHub Actions가 자동으로 build한다. 첫 자동 build(`000a20c`)는 2026-11-24 GPU end to end 검증을 통과했다. 이후 merge로 바뀐 `latest`는 build만 확인된 상태이므로, 시연에는 GPU로 검증한 tag를 쓴다. |
 | Container start command | 비워 둔다 (image의 `CMD`가 `start.sh`를 실행) |
 | Expose HTTP port | `8501` |
 
@@ -76,7 +76,14 @@ RunPod 콘솔에서 pod를 Stop(또는 Terminate)한다. `/workspace` network vo
 
 ## 6. Image build와 push (owner)
 
-main에 merge되면 GitHub Actions(`.github/workflows/publish-image.yaml`)가 단일 image를 자동으로 빌드해 `ghcr.io/gwpark0741/soundpilot:latest`와 `:<commit sha>`로 올린다. UI와 server는 레포 코드로 빌드하고, Audyssey tools는 검증한 이미지 `ghcr.io/gwpark0741/soundpilot-tools:demo-1117`을 고정해서 쓴다. tools를 바꾸려면 sv3에서 e2e로 검증한 뒤 workflow의 `TOOLS_IMAGE`를 바꾼다. 아래는 sv3에서 직접 빌드할 때의 절차이다.
+main에 merge되면 GitHub Actions(`.github/workflows/publish-image.yaml`, Publish Image)가 단일 image를 자동으로 빌드해 `ghcr.io/gwpark0741/soundpilot:latest`와 `:<commit sha>`로 올린다. 약 25분이 걸린다.
+
+- 실행 조건: `src/`, `server/`, `web/`, `scripts/runpod/`, `pyproject.toml`, `uv.lock`, `Dockerfile`, `Dockerfile.runpod`, `.dockerignore`, workflow 파일이 바뀐 merge. 문서, 테스트만 바뀐 merge는 image를 만들지 않는다. Actions 탭에서 수동으로(`workflow_dispatch`) 실행할 수도 있다.
+- 구성: UI와 server image는 레포 코드로 빌드하고, Audyssey tools는 검증한 image `ghcr.io/gwpark0741/soundpilot-tools:demo-1117`을 고정해서 `Dockerfile.runpod`로 합친다.
+- tools를 바꾸려면 새 tools image를 GPU에서 end to end로 검증한 뒤 workflow의 `TOOLS_IMAGE`를 바꾼다.
+- PR에서는 `ci-lint`가 UI image와 server image의 build만 확인하고 push하지 않는다.
+
+기여 절차는 [contributing.md](contributing.md)를 따른다. 아래는 sv3에서 직접 빌드할 때의 절차이다.
 
 ghcr.io에 `write:packages` 권한이 있는 personal access token이 필요하다. 기존 세 image가 로컬에 있어야 한다.
 

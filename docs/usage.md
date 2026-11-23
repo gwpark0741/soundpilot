@@ -1,6 +1,8 @@
 # 사용 가이드
 
-V2A Inspect는 영상에서 SAM3 tracking과 Gemini agent로 sound timeline을 만들고, track마다 오디오를 생성하거나 원본 오디오에서 분리한 뒤 영상에 mix한다. 시연 당일 절차는 [demo-runbook.md](demo-runbook.md)를 따른다.
+SoundPilot은 영상에서 SAM3 tracking과 Gemini agent로 sound timeline을 만들고, track마다 오디오를 생성하거나 원본 오디오에서 분리한 뒤 영상에 mix한다. 시연 당일 절차는 [demo-runbook.md](demo-runbook.md)를 따른다. Python package 이름(`v2a_inspect`)과 CLI 이름(`v2a`)은 그대로이다.
+
+구간 편집, 오디오 편집, track 추가와 삭제는 3절의 "track 편집"에 정리되어 있다. RunPod 단일 image로 실행하는 방법은 [runpod.md](runpod.md)를 따른다.
 
 ## 1. 실행 방법
 
