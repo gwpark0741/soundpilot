@@ -76,6 +76,8 @@ RunPod 콘솔에서 pod를 Stop(또는 Terminate)한다. `/workspace` network vo
 
 ## 6. Image build와 push (owner)
 
+main에 merge되면 GitHub Actions(`.github/workflows/publish-image.yaml`)가 단일 image를 자동으로 빌드해 `ghcr.io/gwpark0741/soundpilot:latest`와 `:<commit sha>`로 올린다. UI와 server는 레포 코드로 빌드하고, Audyssey tools는 검증한 이미지 `ghcr.io/gwpark0741/soundpilot-tools:demo-1117`을 고정해서 쓴다. tools를 바꾸려면 sv3에서 e2e로 검증한 뒤 workflow의 `TOOLS_IMAGE`를 바꾼다. 아래는 sv3에서 직접 빌드할 때의 절차이다.
+
 ghcr.io에 `write:packages` 권한이 있는 personal access token이 필요하다. 기존 세 image가 로컬에 있어야 한다.
 
 ```bash
