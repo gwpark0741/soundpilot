@@ -11,6 +11,7 @@ import io
 import json
 import logging
 import math
+import re
 import subprocess
 import time
 import wave
@@ -499,6 +500,11 @@ def _point_box(point: SceneTrackPoint, frame_size: tuple[int, int]) -> Box | Non
     return (box[0] / width, box[1] / height, box[2] / width, box[3] / height)
 
 
+def _words(text: str) -> list[str]:
+    """Lowercase words with a plural "s" dropped ("Clashing swords" -> clashing, sword)."""
+    return [w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in re.findall(r"[a-z]+", text.lower())]
+
+
 def _iou(a: Box, b: Box) -> float:
     w = min(a[2], b[2]) - max(a[0], b[0])
     h = min(a[3], b[3]) - max(a[1], b[1])
@@ -519,8 +525,9 @@ def link_visual_objects(
 ) -> SoundTimeline:
     """Set visual_object_id on sources whose visual_hint box matches a SAM3 track box at the hint time.
 
-    Picks the track with the best IoU (>= 0.1), else the only track whose box contains the
-    hint center. Sources stay unlinked when nothing matches. `plans` is the list `timeline`
+    Objects whose label's last word appears in the source name are preferred (best IoU, then
+    nearest center). Otherwise picks the track with the best IoU (>= 0.1), else the only track
+    whose box contains the hint center. Sources stay unlinked when nothing matches. `plans` is the list `timeline`
     was built from (same order).
     """
     hinted = sum(p.visual_hint is not None for p in plans)
@@ -528,7 +535,9 @@ def link_visual_objects(
         log.info("separation link: no tracking data, 0/%d hinted sources linked", hinted)
         return timeline
     object_of: dict[UUID, UUID] = {}
+    head_of: dict[UUID, str] = {}
     for obj in identity.visual_objects:
+        head_of[obj.visual_object_id] = (_words(obj.label) or [""])[-1]
         for presence in obj.presences:
             if presence.scene_track_id is not None:
                 object_of.setdefault(presence.scene_track_id, obj.visual_object_id)
@@ -550,12 +559,24 @@ def link_visual_objects(
             box = next((b for b in (_point_box(p, frame_size) for p in near) if b), None)
             if box is not None:
                 boxes.append((box, track))
-        scored = [(_iou(hint.box, box), track) for box, track in boxes]
-        best_iou, best = max(scored, key=lambda x: x[0], default=(0.0, None))
-        if best is None or best_iou < _LINK_IOU:
-            cx, cy = (hint.box[0] + hint.box[2]) / 2, (hint.box[1] + hint.box[3]) / 2
-            inside = [t for b, t in boxes if b[0] <= cx <= b[2] and b[1] <= cy <= b[3]]
-            best = inside[0] if len(inside) == 1 else None
+        cx, cy = (hint.box[0] + hint.box[2]) / 2, (hint.box[1] + hint.box[3]) / 2
+        # An object the source name names ("Clashing swords" -> "sword") wins over a bigger box
+        # next to it; thin objects like blades lose on IoU to the body holding them.
+        named_words = set(_words(item.name))
+        named = [(b, t) for b, t in boxes if head_of[object_of[t.scene_track_id]] in named_words]
+        if named:
+            best = max(
+                named,
+                key=lambda bt: (_iou(hint.box, bt[0]), -abs((bt[0][0] + bt[0][2]) / 2 - cx) - abs((bt[0][1] + bt[0][3]) / 2 - cy)),
+            )[1]
+        elif named_words & set(head_of.values()):
+            best = None  # the named object exists but is not tracked at the hint time; never link another kind
+        else:
+            scored = [(_iou(hint.box, box), track) for box, track in boxes]
+            best_iou, best = max(scored, key=lambda x: x[0], default=(0.0, None))
+            if best is None or best_iou < _LINK_IOU:
+                inside = [t for b, t in boxes if b[0] <= cx <= b[2] and b[1] <= cy <= b[3]]
+                best = inside[0] if len(inside) == 1 else None
         if best is not None:
             sources[-1] = source.model_copy(update={"visual_object_id": object_of[best.scene_track_id]})
             linked += 1

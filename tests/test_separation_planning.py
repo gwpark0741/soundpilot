@@ -323,10 +323,10 @@ def _scene_track(box_px, frame=30) -> SceneTrack:
     return SceneTrack(tracking_prompt="x", points=[point], confidence=0.9)
 
 
-def _identity(*tracks: SceneTrack) -> VisualIdentityLayer:
+def _identity(*tracks: SceneTrack, labels: list[str] | None = None) -> VisualIdentityLayer:
     objects = [
         VisualObject(
-            label=f"obj{i}",
+            label=labels[i] if labels else f"obj{i}",
             presences=[VisualPresence(start_frame_index=0, end_frame_index=60, state="visible", scene_track_id=t.scene_track_id)],
         )
         for i, t in enumerate(tracks)
@@ -361,6 +361,22 @@ def test_link_uses_a_point_within_two_frames_only() -> None:
     far = _scene_track((0, 0, 640, 360), frame=33)
     _, linked, identity = _link([_hinted((0, 0, 0.5, 0.5))], [far, near])
     assert linked.sound_sources[0].visual_object_id == identity.visual_objects[1].visual_object_id
+
+
+def test_link_prefers_an_object_named_in_the_source() -> None:
+    body = _scene_track((448, 0, 832, 720))  # the samurai around the clash: IoU 0.42
+    blade = _scene_track((820, 300, 900, 340))  # the thin blade: IoU ~0.01
+    identity = _identity(body, blade, labels=["black samurai", "katana sword"])
+    _, linked, _ = _link([_hinted((0.35, 0.0, 0.65, 0.7), name="Clashing swords")], [body, blade], identity)
+    assert linked.sound_sources[0].visual_object_id == identity.visual_objects[1].visual_object_id
+
+
+def test_link_skips_other_kinds_when_the_named_object_is_not_tracked_then() -> None:
+    pole = _scene_track((0, 60, 400, 370))  # overlaps the hint well, but it is a polearm
+    samurai = _scene_track((0, 0, 560, 720), frame=50)  # the named object, tracked later only
+    identity = _identity(pole, samurai, labels=["polearm", "red samurai"])
+    _, linked, _ = _link([_hinted((0.0, 0.03, 0.44, 0.99), name="Red-armored samurai")], [pole, samurai], identity)
+    assert linked.sound_sources[0].visual_object_id is None
 
 
 def test_link_falls_back_to_the_only_box_containing_the_hint_center() -> None:
