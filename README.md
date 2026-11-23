@@ -133,7 +133,7 @@ server, so use `compose.demo.yaml` for Generate/Separate.
 | Tag | Built | Status |
 |---|---|---|
 | `demo-20261123` | on sv3 | Verified end to end on a GPU. The presentation version; the safe choice until a release note says otherwise. |
-| `latest` | automatically by GitHub Actions on every merge to main | Moves with main. The first auto-built `latest` is still being verified on a GPU. |
+| `latest` | automatically by GitHub Actions on every merge to main | Moves with main. The first auto-built image (`000a20c`) passed the same GPU end-to-end check on 2026-11-24; later merges are only build-checked, not GPU-checked. |
 | `<commit sha>` | automatically, same build as `latest` for that commit | Pin one change when you want to try it on RunPod. |
 
 The tools part of every image is the pinned `ghcr.io/gwpark0741/soundpilot-tools:demo-1117`.

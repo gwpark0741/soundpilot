@@ -77,7 +77,7 @@ PR 화면의 Checks 영역에서 `ci-lint` workflow의 결과를 확인한다. �
 - 내 변경만 RunPod에서 확인하려면 `latest` 대신 `:<commit sha>`를 쓴다. `latest`는 다른 사람의 merge로 바뀔 수 있기 때문이다. sha는 `git pull` 후 `git rev-parse main`이 출력하는 40자리 값이다.
 - Pod 설정은 [runpod.md](runpod.md)를 따르고 Image 칸에 `ghcr.io/gwpark0741/soundpilot:<commit sha>`를 넣는다. package가 private이면 RunPod의 Container Registry Auth에 ghcr 계정과 `read:packages` token을 등록해야 받을 수 있다.
 - RunPod pod는 유료이므로 띄우기 전에 저장소 owner에게 알린다.
-- 자동 build로 만든 `latest`는 GPU 검증이 끝나기 전까지 시연에 쓰지 않는다. 시연용 검증 image는 `demo-20261123`이다.
+- 자동 build는 image가 만들어지는지만 확인하고 GPU에서 실행해 보지는 않는다. 첫 자동 build(`000a20c`)는 2026-11-24 sv3 GPU에서 end to end 검증을 통과했다. 시연에는 GPU로 검증한 tag(`demo-20261123` 또는 검증을 마친 `<commit sha>`)를 쓴다.
 
 ## 5. 규칙
 

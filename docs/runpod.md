@@ -20,7 +20,7 @@ UI, inference server, Audyssey tools server를 하나의 image(`Dockerfile.runpo
 | CUDA | driver 570 이상 (CUDA 12.8 이상). 두 torch가 모두 `cu128` build이다. RunPod template의 CUDA 필터를 12.8 이상으로 둔다. |
 | Container disk | 50 GB 이상 (triton cache, 임시 영상) |
 | Network volume | 100 GB 이상, mount path `/workspace` (가중치 약 41 GB + 작업 데이터) |
-| Image | `ghcr.io/gwpark0741/soundpilot:<tag>`. `demo-20261123`은 sv3에서 build하고 GPU에서 end to end로 검증한 시연용 image이다. `latest`와 `<commit sha>`는 main에 merge될 때마다 GitHub Actions가 자동으로 build한다. `latest`의 GPU 검증이 끝나 release note로 알리기 전까지는 `demo-20261123`을 쓴다. |
+| Image | `ghcr.io/gwpark0741/soundpilot:<tag>`. `demo-20261123`은 sv3에서 build하고 GPU에서 end to end로 검증한 시연용 image이다. `latest`와 `<commit sha>`는 main에 merge될 때마다 GitHub Actions가 자동으로 build한다. 첫 자동 build(`000a20c`)는 2026-11-24 GPU end to end 검증을 통과했다. 이후 merge로 바뀐 `latest`는 build만 확인된 상태이므로, 시연에는 GPU로 검증한 tag를 쓴다. |
 | Container start command | 비워 둔다 (image의 `CMD`가 `start.sh`를 실행) |
 | Expose HTTP port | `8501` |
 
