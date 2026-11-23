@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+# Single-container demo for one RunPod GPU pod: UI + inference server + Audyssey tools server.
+# The three runtimes keep their own Python and venv; start with the server image (Debian 13,
+# Python 3.12 in /usr/local) and copy the other two in at the same absolute paths.
+#   docker build -f Dockerfile.runpod -t v2a-inspect-runpod:dev .
+# Build args default to the local demo tags; point them at registry images to rebuild elsewhere.
+ARG SERVER_IMAGE=v2a-inspect-server:demo
+ARG UI_IMAGE=v2a-inspect:demo
+ARG TOOLS_IMAGE=audyssey-tools:demo-1117
+
+FROM ${UI_IMAGE} AS ui
+FROM ${TOOLS_IMAGE} AS tools
+
+FROM ${SERVER_IMAGE}
+
+USER root
+
+# UI: Python 3.13 (the venv at /opt/venv links to /usr/local/bin/python3.13 and libpython3.13) + built web app.
+# Only versioned names are copied, so /usr/local/bin/python{,3} stay the server's Python 3.12.
+COPY --from=ui /usr/local/bin/python3.13 /usr/local/bin/python3.13
+COPY --from=ui /usr/local/lib/python3.13 /usr/local/lib/python3.13
+COPY --from=ui /usr/local/lib/libpython3.13.so.1.0 /usr/local/lib/libpython3.13.so.1.0
+COPY --from=ui /opt/venv /opt/venv
+# The venv's interpreter links point at /usr/local/bin/python, which is 3.12 here; aim them at 3.13.
+RUN ln -sf /usr/local/bin/python3.13 /opt/venv/bin/python \
+    && ln -sf python /opt/venv/bin/python3 && ln -sf python /opt/venv/bin/python3.13
+COPY --from=ui /app/web/dist /app/web/dist
+
+# Tools: standalone CPython 3.12 (/opt/python), the venv and the editable audyssey source.
+COPY --from=tools /opt/python /opt/python
+COPY --from=tools /app/gpu /app/gpu
+COPY --from=tools /app/src /app/src
+COPY --from=tools /app/pyproject.toml /app/README.md /app/
+
+# gcc/libc6-dev: triton compiles GPU kernels at runtime (SAM Audio Judge).
+RUN ldconfig \
+    && apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/runpod/start.sh scripts/runpod/fetch_weights.py /app/runpod/
+
+ENV PYTHONUNBUFFERED=1 \
+    HF_HOME=/workspace/hf \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+
+# Runs as root: RunPod mounts /workspace root-owned, and nothing here needs an unprivileged user.
+WORKDIR /workspace
+EXPOSE 8501
+CMD ["bash", "/app/runpod/start.sh"]

@@ -147,6 +147,8 @@ uv run python scripts/demo_preflight.py --gpu <N> --warmup <video> [<video> ...]
 `--warmup` loads the tools models before the first real call. See
 [docs/demo-runbook.md](docs/demo-runbook.md) and
 [docs/demo-measurements.md](docs/demo-measurements.md).
+To run the whole stack in one RunPod GPU pod from a single image, see
+[docs/runpod.md](docs/runpod.md) (`Dockerfile.runpod`).
 
 ## Packages
 

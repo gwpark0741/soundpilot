@@ -66,22 +66,7 @@ Peak 약 49.6 GB (inference 약 28.7 GB, tools 약 20.9 GB, ui 0). 한도 70 GB 
 
 ## 6. RunPod backup
 
-아직 실제 실행으로 검증하지 않았다. 유료이며 사용 전 승인이 필요하다.
-
-- tools pod: `audyssey-tools:demo-1117` image, compose의 `tools` service와 같은 command와 `AUDYSSEY_TOOL_TOKEN`.
-- inference pod: `v2a-inspect-server:demo` image, `V2A_SERVER_API_TOKEN` 설정.
-- UI container (노트북): `v2a-inspect:demo`에 다음 변수를 지정한다.
-  - `V2A_INSPECT_CLIENT_SERVER_TOKEN` (= inference pod의 `V2A_SERVER_API_TOKEN`)
-  - `V2A_INSPECT_UI_SERVER_URL`, `V2A_INSPECT_CLIENT_SERVER_HOST`, `V2A_INSPECT_CLIENT_SERVER_PORT`: inference pod 주소
-  - `V2A_INSPECT_AUDYSSEY_TOOLS_URL`, `V2A_INSPECT_AUDYSSEY_TOOL_TOKEN`: tools pod 주소와 token
-  - `GEMINI_API_KEY`, `V2A_INSPECT_VIDEO_ENCODE_USE_NVENC=false`
-
-Image 전달 방법은 사용자가 정한다.
-
-```bash
-docker save audyssey-tools:demo-1117 v2a-inspect:demo v2a-inspect-server:demo | zstd > <path>
-# 또는 사용자가 지정한 registry에 push
-```
+세 서비스를 하나의 image(`Dockerfile.runpod`)로 묶어 pod 1개에서 실행한다. 설정, 가중치 목록, build와 push 명령은 [docs/runpod.md](runpod.md)를 따른다. 아직 RunPod GPU에서 실행으로 검증하지 않았다. 유료이며 사용 전 승인이 필요하다.
 
 ## 7. TTS
 
