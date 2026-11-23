@@ -52,7 +52,7 @@ from .rows import (
     tracking_window_rows,
 )
 from .store import VideoAssetSnapshot, VideoAssetStore
-from .track_edit import NewTrackModel, add_track, set_clip
+from .track_edit import NewTrackModel, add_track, set_clip, set_event_spans
 
 
 DEFAULT_WORK_DIR = os.getenv("V2A_INSPECT_UI_WORK_DIR")
@@ -69,11 +69,21 @@ class ClipBody(BaseModel):
     offset: float
 
 
+class SpanBody(BaseModel):
+    start_frame: int
+    end_frame: int
+
+
 class NewTrackBody(BaseModel):
     label: str
     description: str
     model: NewTrackModel
     spoken_text: str | None = None
+    spans: list[SpanBody]
+
+
+class EventSpanBody(BaseModel):
+    sound_event_id: uuid.UUID
     start_frame: int
     end_frame: int
 
@@ -239,6 +249,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         method: Annotated[Literal["separate", "generate", "selsync"], Form()],
         description: Annotated[str | None, Form()] = None,
         seed: Annotated[int | None, Form()] = None,
+        events: Annotated[str | None, Form()] = None,  # JSON [{sound_event_id, start_frame, end_frame}]
     ) -> dict[str, object]:
         snapshot = await store.snapshot()
         if snapshot.status == "running":
@@ -247,8 +258,19 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         if asset is None:
             raise HTTPException(status_code=404, detail="No video asset loaded")
         tracks = asset.sound_timeline.sound_tracks if asset.sound_timeline else []
-        if not any(str(t.sound_track_id) == sound_track_id for t in tracks):
+        track = next((t for t in tracks if str(t.sound_track_id) == sound_track_id), None)
+        if track is None:
             raise HTTPException(status_code=404, detail="Sound track not found")
+        if events:
+            try:
+                edits = [EventSpanBody(**e) for e in json.loads(events)]
+                asset = set_event_spans(
+                    asset,
+                    track.sound_track_id,
+                    {e.sound_event_id: (e.start_frame, e.end_frame) for e in edits},
+                )
+            except (ValueError, TypeError) as exc:  # bad JSON, bad shape, or bad spans
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         if method == "selsync":  # old name for "generate"
             method = "generate"
         if method == "separate" and not asset.has_audio:
@@ -343,8 +365,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
                 description=body.description,
                 model=body.model,
                 spoken_text=body.spoken_text,
-                start_frame=body.start_frame,
-                end_frame=body.end_frame,
+                spans=[(s.start_frame, s.end_frame) for s in body.spans],
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

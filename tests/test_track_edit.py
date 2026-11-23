@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,7 +36,7 @@ from v2a_inspect.ui.pipeline import (
 )
 from v2a_inspect.ui.routes import create_router
 from v2a_inspect.ui.store import VideoAssetStore
-from v2a_inspect.ui.track_edit import add_track, delete_track, set_clip
+from v2a_inspect.ui.track_edit import add_track, delete_track, set_clip, set_event_spans
 
 RATE = 1000  # 4 s video -> 4000 samples; the sample value is its index
 
@@ -268,8 +269,7 @@ class TrackEditTest(unittest.TestCase):
                     description=" a sound ",
                     model=model,
                     spoken_text="Hello" if model == "tts" else "ignored",
-                    start_frame=10,
-                    end_frame=500,
+                    spans=[(10, 500)],
                 )
                 timeline = result.sound_timeline
                 self.assertEqual(len(timeline.sound_tracks), 3)
@@ -293,16 +293,55 @@ class TrackEditTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             asset, _ = _asset(Path(temp_dir))
             ok = {"label": "A", "description": "b", "model": "t2a",
-                  "spoken_text": None, "start_frame": 0, "end_frame": 30}
+                  "spoken_text": None, "spans": [(0, 30)]}
             for bad in (
                 {"label": " "},
                 {"description": ""},
                 {"model": "tts"},  # speech needs spoken text
-                {"start_frame": 120},
-                {"start_frame": 30, "end_frame": 30},
+                {"spans": []},
+                {"spans": [(120, 130)]},
+                {"spans": [(30, 30)]},
+                {"spans": [(0, 30), (-1, 5)]},
             ):
                 with self.assertRaises(ValueError, msg=str(bad)):
                     add_track(asset, **{**ok, **bad})
+
+    def test_add_track_makes_one_event_per_span_sorted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, _ = _asset(Path(temp_dir))
+            result, track = add_track(
+                asset,
+                label="Steps",
+                description="steps",
+                model="tts",
+                spoken_text="Hi",
+                spans=[(60, 90), (0, 30), (100, 500)],
+            )
+            events = [
+                e for e in result.sound_timeline.sound_events
+                if e.sound_track_id == track.sound_track_id
+            ]
+            self.assertEqual(
+                [(e.start_frame_index, e.end_frame_index) for e in events],
+                [(0, 30), (60, 90), (100, 120)],  # sorted, end clamped to the video
+            )
+            self.assertEqual({e.spoken_text for e in events}, {"Hi"})
+            self.assertEqual(len({e.sound_event_id for e in events}), 3)
+
+    def test_set_event_spans_applies_and_validates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, (door, wind) = _asset(Path(temp_dir))
+            events = asset.sound_timeline.sound_events
+            door_event, wind_event = events[0].sound_event_id, events[1].sound_event_id
+            result = set_event_spans(asset, door.sound_track_id, {door_event: (10, 120)})
+            spans = {
+                e.sound_event_id: (e.start_frame_index, e.end_frame_index)
+                for e in result.sound_timeline.sound_events
+            }
+            self.assertEqual(spans, {door_event: (10, 120), wind_event: (0, 30)})
+            for bad in ({wind_event: (1, 2)}, {door_event: (5, 121)}, {door_event: (5, 5)}, {door_event: (-1, 5)}):
+                with self.assertRaises(ValueError, msg=str(bad)):
+                    set_event_spans(asset, door.sound_track_id, bad)
 
     def test_old_track_json_loads_without_clip_fields(self) -> None:
         track = SoundTrack.model_validate(
@@ -503,6 +542,49 @@ class TrackEditRouteTest(unittest.TestCase):
             client, _ = self._client(asset)
             self.assertEqual(client.delete(f"/api/audio/tracks/{uuid4()}").status_code, 404)
 
+    def test_regenerate_route_applies_event_spans_to_that_track_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, (door, wind) = _asset(root)
+            door_event, wind_event = (e.sound_event_id for e in asset.sound_timeline.sound_events)
+            url = f"/api/audio/tracks/{door.sound_track_id}/regenerate"
+
+            def spans(snapshot):
+                return {
+                    e.sound_event_id: (e.start_frame_index, e.end_frame_index)
+                    for e in snapshot.asset.sound_timeline.sound_events
+                }
+
+            client, store = self._client(asset)
+            events = json.dumps([{"sound_event_id": str(door_event), "start_frame": 40, "end_frame": 100}])
+            with (
+                patch("v2a_inspect.ui.pipeline.generate_track", side_effect=_fake_stem),
+                patch("v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix),
+            ):
+                response = client.post(url, data={"method": "generate", "events": events})
+            snapshot = asyncio.run(store.snapshot())
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(snapshot.status, "complete")  # the pipeline ran and saved the asset
+            self.assertEqual(spans(snapshot), {door_event: (40, 100), wind_event: (0, 30)})
+
+            # Rejected before anything is queued: another track's event, out of range, start >= end, bad JSON.
+            for bad in (
+                [{"sound_event_id": str(wind_event), "start_frame": 1, "end_frame": 9}],
+                [{"sound_event_id": str(door_event), "start_frame": 0, "end_frame": 121}],
+                [{"sound_event_id": str(door_event), "start_frame": 9, "end_frame": 9}],
+                [{"sound_event_id": str(door_event), "start_frame": -1, "end_frame": 9}],
+                [{"sound_event_id": "nope", "start_frame": 1, "end_frame": 9}],
+                {"not": "a list"},
+            ):
+                client, store = self._client(asset)
+                with patch("v2a_inspect.ui.routes.run_track_regeneration_pipeline") as pipeline:
+                    response = client.post(url, data={"method": "generate", "events": json.dumps(bad)})
+                self.assertEqual(response.status_code, 422, msg=str(bad))
+                pipeline.assert_not_called()
+                self.assertEqual(spans(asyncio.run(store.snapshot())), {door_event: (0, 30), wind_event: (0, 30)})
+            client, _ = self._client(asset)
+            self.assertEqual(client.post(url, data={"method": "generate", "events": "{"}).status_code, 422)
+
     def test_create_route_adds_the_track_and_stays_idle(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             asset, _ = _asset(Path(temp_dir))
@@ -510,8 +592,7 @@ class TrackEditRouteTest(unittest.TestCase):
                 "label": "Glass",
                 "description": "glass breaking",
                 "model": "t2a",
-                "start_frame": 30,
-                "end_frame": 90,
+                "spans": [{"start_frame": 60, "end_frame": 90}, {"start_frame": 0, "end_frame": 30}],
             }
             client, store = self._client(asset)
             response = client.post("/api/audio/tracks", json=body)
@@ -522,9 +603,16 @@ class TrackEditRouteTest(unittest.TestCase):
             self.assertEqual(response.json()["sound_track_id"], str(tracks[-1].sound_track_id))
             self.assertEqual(snapshot.status, "complete")  # regenerate can start right away
             self.assertEqual(tracks[-1].generation_model, "t2a")
+            added = [
+                (e.start_frame_index, e.end_frame_index)
+                for e in snapshot.asset.sound_timeline.sound_events
+                if e.sound_track_id == tracks[-1].sound_track_id
+            ]
+            self.assertEqual(added, [(0, 30), (60, 90)])
 
             self.assertEqual(client.post("/api/audio/tracks", json={**body, "label": " "}).status_code, 422)
             self.assertEqual(client.post("/api/audio/tracks", json={**body, "model": "x"}).status_code, 422)
+            self.assertEqual(client.post("/api/audio/tracks", json={**body, "spans": []}).status_code, 422)
             self.assertEqual(
                 client.post("/api/audio/tracks", json={**body, "model": "separate"}).status_code, 422
             )  # the asset has no original audio
