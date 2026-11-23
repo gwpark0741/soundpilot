@@ -13,6 +13,9 @@ FROM ${TOOLS_IMAGE} AS tools
 
 FROM ${SERVER_IMAGE}
 
+LABEL org.opencontainers.image.source="https://github.com/gwpark0741/v2a_inspect" \
+      org.opencontainers.image.description="v2a_inspect demo: UI + inference server + Audyssey tools in one container"
+
 USER root
 
 # UI: Python 3.13 (the venv at /opt/venv links to /usr/local/bin/python3.13 and libpython3.13) + built web app.
