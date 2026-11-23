@@ -81,6 +81,14 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   assert.match(m, /Audyssey tools server unreachable\. Check the tools server, then press Regenerate\./);
   assert.doesNotMatch(m, /127\.0\.0\.1|Errno/);
   assert.match(m, /Previous audio kept\./);
+  m = html({
+    status: {
+      state: "failed",
+      error: "SelSync returned silence in the event spans. Regenerate to try another seed or switch the model.",
+    },
+  });
+  assert.match(m, /SelSync returned silence/);
+  assert.doesNotMatch(m, /Previous audio kept\./);
   m = html({ status: { state: "failed", error: "Audyssey /generate failed (500): boom" } });
   assert.match(m, /Audyssey \/generate failed \(500\): boom\. Check the tools server, then press Regenerate\./);
 

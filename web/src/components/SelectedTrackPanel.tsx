@@ -165,10 +165,13 @@ export default function SelectedTrackPanel({
             <Icon name="x" />
             <div>
               {trackFailureText(status.error)}
-              <p>
-                <Icon name="info" />
-                Previous audio kept.
-              </p>
+              {/* A silent SelSync result keeps the new (silent) audio, not the previous one. */}
+              {status.error?.startsWith("SelSync returned silence") ? null : (
+                <p>
+                  <Icon name="info" />
+                  Previous audio kept.
+                </p>
+              )}
             </div>
           </div>
         ) : null}
