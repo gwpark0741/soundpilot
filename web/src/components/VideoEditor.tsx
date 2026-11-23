@@ -86,6 +86,7 @@ export default function VideoEditor({
   const [baseAsset, setBaseAsset] = useState<VideoAsset | null>(null);
   const [draftAsset, setDraftAsset] = useState<VideoAsset | null>(null);
   const [hasTimelineEdits, setHasTimelineEdits] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
   const audioPreviewMutedRestoreRef = useRef<boolean | null>(null);
@@ -174,7 +175,7 @@ export default function VideoEditor({
     return () => {
       alive = false;
     };
-  }, [state.timeline_rows, state.version]);
+  }, [state.timeline_rows, state.version, reloadKey]);
 
   // A new run clears the asset (and a new video replaces it): drop everything tied to the old project,
   // or a stale "unsaved edits" flag would freeze the refresh above.
@@ -553,14 +554,18 @@ export default function VideoEditor({
   }
 
   async function changeAudioMode(mode: "generate" | "separate") {
+    // Each mode has its own timeline, so unsaved edits to this one cannot carry over.
+    if (hasTimelineEdits && !window.confirm("Switching the audio method discards unsaved timeline edits.")) {
+      return;
+    }
     try {
       await onSetAudioMode?.(mode);
     } catch {
       return;
     }
-    // Unsaved timeline edits keep the loaded draft, which Generate audio sends back: it must carry the new mode.
-    setBaseAsset((asset) => (asset ? { ...asset, audio_mode: mode } : asset));
-    setDraftAsset((asset) => (asset ? { ...asset, audio_mode: mode } : asset));
+    // The server timeline replaces the draft: drop the edits and reload it.
+    setHasTimelineEdits(false);
+    setReloadKey((key) => key + 1);
   }
 
   async function submitGenerateAudio() {

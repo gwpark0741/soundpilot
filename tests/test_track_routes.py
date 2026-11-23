@@ -196,28 +196,55 @@ class TrackRouteTest(unittest.TestCase):
                 ["selsync"],
             )
 
-    def test_set_mode_changes_only_audio_mode(self) -> None:
+    def test_set_mode_separate_plans_in_background_once(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            asset, track = _asset(Path(temp_dir), has_audio=True)
+            asset, _ = _asset(Path(temp_dir), has_audio=True)
+            client, store = self._client(asset)
+            with patch("v2a_inspect.ui.routes.run_separation_planning_pipeline") as plan:
+                response = client.post("/api/audio/mode", data={"mode": "separate"})
+                again = client.post("/api/audio/mode", data={"mode": "separate"})
+
+            self.assertEqual(response.json(), {"status": "queued"})
+            self.assertEqual(again.status_code, 409)  # the store is running
+            plan.assert_called_once()
+            snapshot = asyncio.run(store.snapshot())
+            self.assertEqual(snapshot.status, "running")
+            self.assertEqual(snapshot.current_stage, "planning separation")
+            self.assertEqual(snapshot.asset.audio_mode, "generate")  # changes when planning ends
+
+    def test_set_mode_swaps_stored_timelines(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, _ = _asset(
+                Path(temp_dir),
+                has_audio=True,
+                synthesized_video_path=Path(temp_dir) / "preview.mp4",
+            )
+            separation = SoundTimeline(
+                sound_tracks=[
+                    SoundTrack(track_type="sfx", label="Wind", generation_model="separate")
+                ]
+            )
+            asset = asset.model_copy(update={"inactive_timeline": separation})
+            generate = asset.sound_timeline
             client, store = self._client(asset)
             version = asyncio.run(store.snapshot()).asset_version
+            with patch("v2a_inspect.ui.routes.run_separation_planning_pipeline") as plan:
+                response = client.post("/api/audio/mode", data={"mode": "separate"})
+                snapshot = asyncio.run(store.snapshot())
+                self.assertEqual(response.json(), {"status": "ok"})
+                self.assertEqual(snapshot.status, "complete")
+                self.assertEqual(snapshot.asset_version, version + 1)  # media reloads
+                self.assertEqual(snapshot.asset.audio_mode, "separate")
+                self.assertEqual(snapshot.asset.sound_timeline, separation)
+                self.assertEqual(snapshot.asset.inactive_timeline, generate)
+                self.assertIsNone(snapshot.asset.synthesized_video_path)
 
-            def tracks():
-                return asyncio.run(store.snapshot()).asset.sound_timeline.sound_tracks
-
-            response = client.post("/api/audio/mode", data={"mode": "separate"})
-            self.assertEqual(response.json(), {"status": "ok"})
-            snapshot = asyncio.run(store.snapshot())
-            self.assertEqual(snapshot.status, "complete")
-            self.assertEqual(snapshot.asset_version, version)  # media must not reload
-            self.assertEqual(snapshot.asset.audio_mode, "separate")
-            (kept,) = tracks()
-            self.assertEqual(kept.generation_model, "selsync")
-
-            client.post("/api/audio/mode", data={"mode": "generate"})
-            self.assertEqual(asyncio.run(store.snapshot()).asset.audio_mode, "generate")
-            (kept,) = tracks()
-            self.assertEqual(kept.generation_model, "selsync")
+                client.post("/api/audio/mode", data={"mode": "generate"})
+                snapshot = asyncio.run(store.snapshot())
+                self.assertEqual(snapshot.asset.audio_mode, "generate")
+                self.assertEqual(snapshot.asset.sound_timeline, generate)
+                self.assertEqual(snapshot.asset.inactive_timeline, separation)
+            plan.assert_not_called()
 
     def test_mode_switch_then_partial_action_keeps_event_level_track_audio(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -251,10 +278,7 @@ class TrackRouteTest(unittest.TestCase):
                     ],
                 }
             )
-            client, store = self._client(asset)
-            client.post("/api/audio/mode", data={"mode": "separate"})
-            switched = asyncio.run(store.snapshot()).asset
-            self.assertEqual(switched.audio_mode, "separate")
+            switched = asset.model_copy(update={"audio_mode": "separate"})
 
             store = VideoAssetStore()
             asyncio.run(store.set_complete_asset(switched))

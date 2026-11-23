@@ -48,6 +48,11 @@ from v2a_inspect.audio_generation.mix import (
     mix_audio_into_video,
     mix_audio_items_to_wav,
 )
+from v2a_inspect.separation_planning import (
+    plan_separation,
+    stage_summary,
+    switch_audio_mode,
+)
 from v2a_inspect.preprocessing import (
     analyze_initial_scene,
     build_visual_identity_layer,
@@ -784,6 +789,26 @@ async def run_residual_toggle_pipeline(
     except Exception:  # noqa: BLE001 - UI needs stage-specific failure text.
         logging.getLogger(__name__).exception("Residual toggle failed")
         await store.set_error("Could not change the rest of original audio.")
+
+
+async def run_separation_planning_pipeline(
+    video_asset: VideoAsset,
+    store: VideoAssetStore,
+) -> None:
+    """Plan audible sources, then switch to Separate with them as the timeline."""
+    try:
+        timeline, dropped = await asyncio.to_thread(plan_separation, video_asset)
+        if not timeline.sound_tracks:
+            reasons = "; ".join(i.message for i in dropped)
+            raise ValueError("No audible sources were found." + (f" {reasons}" if reasons else ""))
+        # The planned timeline is stored as the inactive one, then swapped in.
+        video_asset = switch_audio_mode(
+            video_asset.model_copy(update={"inactive_timeline": timeline}), "separate"
+        )
+        await store.set_complete_asset(video_asset, stage=stage_summary(timeline, dropped))
+    except Exception as exc:  # noqa: BLE001 - UI needs stage-specific failure text.
+        logging.getLogger(__name__).exception("Separation planning failed")
+        await store.set_error(f"Could not plan the separation: {exc}")
 
 
 _TRACK_LEVEL_MODELS = ("separate", "selsync")

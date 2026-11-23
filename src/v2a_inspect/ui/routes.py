@@ -19,6 +19,7 @@ from v2a_inspect.audio_generation.routing import route_tracks
 from v2a_inspect.models import SoundTimeline, VideoAsset
 from v2a_inspect.preprocessing import prepare_video
 from v2a_inspect.preprocessing.video import extract_original_audio
+from v2a_inspect.separation_planning import switch_audio_mode
 
 from .bundle import read_bundle, write_bundle
 from .overlays import render_tracking_overlay
@@ -30,6 +31,7 @@ from .pipeline import (
     run_event_audio_delete_pipeline,
     run_event_audio_regeneration_pipeline,
     run_residual_toggle_pipeline,
+    run_separation_planning_pipeline,
     run_track_regeneration_pipeline,
 )
 from .rows import (
@@ -241,6 +243,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
     @router.post("/api/audio/mode")
     async def set_audio_mode(
         mode: Annotated[Literal["generate", "separate"], Form()],
+        background_tasks: BackgroundTasks,
     ) -> dict[str, object]:
         snapshot = await store.snapshot()
         if snapshot.status == "running":
@@ -248,7 +251,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         asset = snapshot.asset
         if asset is None:
             raise HTTPException(status_code=404, detail="No video asset loaded")
-        try:  # validation only: tracks (and their audio) stay as is until the next full run
+        try:  # validation only
             route_tracks(
                 asset.sound_timeline or SoundTimeline(),
                 mode=mode,
@@ -256,12 +259,19 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        # No background job follows: publish without bumping asset_version (media
-        # stays loaded), then finish (publish alone leaves the status "running").
-        await store.publish_asset_mutation(
-            asset.model_copy(update={"audio_mode": mode}), stage="changing audio mode"
+        if mode == asset.audio_mode:
+            await store.publish_asset_mutation(asset, stage="changing audio mode")
+            await store.set_complete(stage=f"Audio mode: {mode.capitalize()}")
+            return {"status": "ok"}
+        if mode == "separate" and asset.inactive_timeline is None:
+            # No separation timeline yet: plan it from the audio; the mode changes when it is ready.
+            await store.set_running(stage="planning separation")
+            background_tasks.add_task(run_separation_planning_pipeline, asset, store)
+            return {"status": "queued"}
+        # The preview video changed with the mode, so the media reloads (asset_version bump).
+        await store.set_complete_asset(
+            switch_audio_mode(asset, mode), stage=f"Audio mode: {mode.capitalize()}"
         )
-        await store.set_complete(stage=f"Audio mode: {mode.capitalize()}")
         return {"status": "ok"}
 
     @router.post("/api/audio/residual")
