@@ -102,6 +102,15 @@ h1, h2, h3, p { margin: 0; }
 .side h2 { font-size: 0.75rem; line-height: 1.25; font-weight: 600; color: var(--muted); padding: 0 2px; }
 .detail { display: grid; background: var(--raise); border: 1px solid var(--oc); box-shadow: var(--lift); border-radius: var(--r-panel); padding: 10px; gap: 8px; }
 .d-head { display: flex; align-items: center; gap: 8px; }
+.an-sum { color: var(--muted); font-size: 0.75rem; padding: 0 2px; }
+.an-scene { border-color: var(--line, #3a3f4b); gap: 6px; }
+.an-scene.an-cur { border-color: var(--c-player); }
+.an-scene summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.8125rem; font-weight: 600; }
+.an-time { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.an-list { list-style: none; display: grid; gap: 4px; font-size: 0.8125rem; }
+.an-list li { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.an-seek { background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline dotted; font-variant-numeric: tabular-nums; }
+.an-empty { color: var(--muted); font-size: 0.75rem; }
 .d-head h3 { flex: 1; min-width: 0; font-size: 0.9375rem; line-height: 1.25; font-weight: 600; overflow-wrap: anywhere; }
 .d-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ctl { display: flex; gap: 4px; flex: none; }
@@ -160,15 +169,13 @@ h1, h2, h3, p { margin: 0; }
 .wave { position: absolute; inset: 3px 0; width: 100%; height: calc(100% - 6px); fill: var(--oc); fill-opacity: 0.7; }
 .lane.sel .wave { fill-opacity: 0.8; }
 .lane.sel[data-obj="none"] .wave { fill: #b4bccb; fill-opacity: 0.7; }
-.ev { position: absolute; top: 3px; bottom: 3px; padding: 0; background: rgba(255,255,255,.14); border: 1px solid #c9d0de; border-radius: 3px; cursor: grab; min-width: 4px; touch-action: none; user-select: none; }
+.ev { position: absolute; top: 3px; bottom: 3px; padding: 0; background: rgba(255,255,255,.08); border: 1px solid #c9d0de; border-radius: 3px; cursor: grab; min-width: 4px; touch-action: none; user-select: none; }
 .ev:active { cursor: grabbing; }
 .ev::after { content: ""; position: absolute; inset: -3px -8px; }
-.ev.long { top: auto; bottom: 2px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.35); border-color: rgba(255,255,255,.6); }
-.ev.long::after { inset: -9px 0 -3px; }
 .ev-handle { position: absolute; z-index: 1; inset-block: -3px; width: 10px; cursor: ew-resize; }
 .ev-handle-left { inset-inline-start: -5px; }
 .ev-handle-right { inset-inline-end: -5px; }
-@media (hover: hover) { .ev:hover { background: rgba(255,255,255,.34); } .ev.long:hover { background: rgba(255,255,255,.55); } }
+@media (hover: hover) { .ev:hover { background: rgba(255,255,255,.34); } }
 .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; margin-left: -1px; }
 
 /* spinner (motion only when allowed; the label carries the meaning) */

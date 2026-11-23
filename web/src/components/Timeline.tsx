@@ -336,7 +336,7 @@ export default function Timeline({
                   return (
                     <button
                       aria-label={`Edit ${row.label} event, frames ${row.start_frame} to ${row.end_frame}`}
-                      className={bar.width >= 50 ? "ev long" : "ev"}
+                      className="ev"
                       key={row.sound_event_id ?? `${id}-${row.start_frame}-${row.end_frame}-${index}`}
                       onPointerDown={editable ? (event) => startSoundEventEdit(event, row) : undefined}
                       style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
