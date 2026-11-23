@@ -489,11 +489,15 @@ export default function VideoEditor({
     }
   }
 
+  // The latest rows live in a ref so the callback below keeps its identity while a drag updates them.
+  const timelineRowsRef = useRef(timelineRows);
+  timelineRowsRef.current = timelineRows;
+  // Per tick only the rows change; applyTimelineEdits(draftAsset, timelineRows) puts them into the asset at Generate/export.
   const editSoundEventTimestamp = useCallback(
     (soundEventId: string, startFrame: number, endFrame: number) => {
       const nextStart = clamp(startFrame, 0, Math.max(0, maxFrame));
       const nextEnd = clamp(endFrame, nextStart + 1, timelineFrameCount || 1);
-      const current = timelineRows.find((row) => row.sound_event_id === soundEventId);
+      const current = timelineRowsRef.current.find((row) => row.sound_event_id === soundEventId);
       if (current && current.start_frame === nextStart && current.end_frame === nextEnd) {
         return;
       }
@@ -509,18 +513,9 @@ export default function VideoEditor({
           };
         }),
       );
-      setDraftAsset((currentAsset) =>
-        currentAsset
-          ? updateSoundEventInAsset(currentAsset, soundEventId, (event) => ({
-              ...event,
-              start_frame_index: nextStart,
-              end_frame_index: nextEnd,
-            }))
-          : currentAsset,
-      );
       setHasTimelineEdits(true);
     },
-    [maxFrame, timelineFrameCount, timelineRows],
+    [maxFrame, timelineFrameCount],
   );
 
   function resetTimestampEdits() {

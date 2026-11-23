@@ -117,9 +117,14 @@ export default function Timeline({
     ticks.push(second);
   }
 
+  // The window listeners are added once; they read the latest props from here.
+  const latestRef = useRef({ onEditSoundEvent, timelineEndFrame });
+  latestRef.current = { onEditSoundEvent, timelineEndFrame };
+
   useEffect(() => {
     function handlePointerMove(event: globalThis.PointerEvent) {
       const drag = dragRef.current;
+      const { onEditSoundEvent, timelineEndFrame } = latestRef.current;
       if (!drag || !onEditSoundEvent) {
         return;
       }
@@ -159,7 +164,7 @@ export default function Timeline({
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
     };
-  }, [onEditSoundEvent, timelineEndFrame]);
+  }, []);
 
   function selectFrame(event: PointerEvent<HTMLElement>) {
     if (maxPlaybackFrame <= 0) {
