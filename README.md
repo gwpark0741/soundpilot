@@ -1,67 +1,66 @@
 # SoundPilot
 
-**SoundPilot is a tool-calling agent system for multitrack sound design** (team
-sogang V2A). It turns a video into an editable multitrack sound timeline, produces
-each track with a suitable audio model (or separates it from the original audio),
-and mixes the result back into the video.
+**SoundPilot은 multitrack 사운드 디자인을 위한 tool-calling agent 시스템이다** (team
+sogang V2A). 영상을 편집 가능한 multitrack sound timeline으로 바꾸고, track마다 알맞은
+오디오 모델로 소리를 생성하거나 원본 오디오에서 분리한 뒤, 결과를 영상에 mix한다.
 
-The product name is SoundPilot (the UI title and the Docker image). The Python
-package is still `v2a_inspect` and the CLI is still `v2a`.
+제품 이름은 SoundPilot이다 (UI 제목과 Docker image). Python package 이름은 그대로
+`v2a_inspect`이고 CLI 이름은 그대로 `v2a`이다.
 
-## How it works
+## 동작 방식
 
-1. PySceneDetect splits the video into scenes.
-2. Gemini analyzes each scene.
-3. SAM3 tracks the objects and produces visual events.
-4. A Gemini sound-timeline agent plans the sound as source / track / event.
-5. Routing assigns each track to an audio model (Generate) or to separation (Separate).
-6. Per-track audio is produced and mixed into the video.
+1. PySceneDetect가 영상을 scene으로 나눈다.
+2. Gemini가 scene마다 분석한다.
+3. SAM3가 object를 tracking하고 visual event를 만든다.
+4. Gemini sound-timeline agent가 소리를 source / track / event로 계획한다.
+5. 라우팅이 track마다 오디오 모델(Generate) 또는 분리(Separate)를 지정한다.
+6. track별 오디오를 만들어 영상에 mix한다.
 
-## Features
+## 기능
 
-- **Generate mode** (default), per-track routing:
-  - Visible, picture-timed SFX: SelVA w/ SelSync (Audyssey tools server, one stem per track).
-  - Ambience and off-screen sources: ElevenLabs SFX.
-  - Speech: Kokoro TTS (English only).
-  - A SelSync stem that is silent inside its events falls back to ElevenLabs on a full
-    run. On a per-track regenerate it is flagged instead.
-- **Separate mode** (needs original audio): Gemini listens to the original audio and
-  plans the sources (Audyssey planning-evidence-v3, with per-source audio validation).
-  SAM Audio separates each source, using its spans as positive anchors; 8 candidates are
-  reranked by CLAP and SAM Audio Judge. Sources are linked to SAM3 objects (by name,
-  then by box IoU). The residual (original minus stems) can be toggled.
-- **Editing**: "Edit spans" moves and resizes event boxes (the input of generation and
-  separation); "Edit audio" trims and moves each track's clip without changing the
-  stem; "Add track" (several spans, model SelSync / ElevenLabs / Kokoro / SAM Audio);
-  "Delete track"; "Regenerate with new spans" regenerates only the edited track.
-- **Analysis panel** and **project history** (Recent projects) in the UI.
-- **Sharing**: Save bundle (zip, about 30-40 MB per 10 s clip) and Download video (MP4).
-  Open a bundle with "Load a saved project".
+- **Generate mode** (기본), track별 라우팅:
+  - 화면에 보이고 화면과 타이밍을 맞추는 SFX: SelVA w/ SelSync (Audyssey tools server, track당 stem 하나).
+  - 앰비언스와 화면 밖 source: ElevenLabs SFX.
+  - 음성: Kokoro TTS (영어만 지원).
+  - event 구간 안에서 무음인 SelSync stem은 전체 실행에서 ElevenLabs로 대체된다.
+    track 단위 재생성에서는 대체하지 않고 표시만 한다.
+- **Separate mode** (원본 오디오 필요): Gemini가 원본 오디오를 듣고 source를 계획한다
+  (Audyssey planning-evidence-v3, source별 오디오 검증 포함).
+  SAM Audio가 각 source를 분리하며, 구간(span)을 positive anchor로 사용한다. 후보 8개를
+  CLAP과 SAM Audio Judge로 rerank한다. source는 SAM3 object와 연결된다 (이름으로 먼저,
+  다음으로 box IoU). residual(원본에서 stem을 뺀 나머지)은 켜고 끌 수 있다.
+- **편집**: "Edit spans"는 event 박스를 이동하고 크기를 조절한다 (생성과 분리의 입력이 된다).
+  "Edit audio"는 stem을 바꾸지 않고 각 track의 clip을 자르고 이동한다.
+  "Add track"은 span을 여러 개 받고 모델은 SelSync / ElevenLabs / Kokoro / SAM Audio 중에서 고른다.
+  "Delete track"은 track을 지운다. "Regenerate with new spans"는 편집한 track만 다시 생성한다.
+- UI의 **Analysis panel**과 **project history** (Recent projects).
+- **공유**: Save bundle (zip, 10초 clip당 약 30-40 MB)과 Download video (MP4).
+  bundle은 "Load a saved project"로 연다.
 
-Known limits: running separation replaces the generation audio (run Generate first if
-you need both); Kokoro is English only; ambience may be split per scene.
-UI walkthrough: [docs/usage.md](docs/usage.md) (Korean).
+알려진 제한: 분리를 실행하면 생성된 오디오가 교체된다 (둘 다 필요하면 Generate를 먼저
+실행한다). Kokoro는 영어만 지원한다. 앰비언스는 scene마다 나뉠 수 있다.
+UI 사용 안내: [docs/usage.md](docs/usage.md).
 
-## Run it
+## 실행 방법
 
-### RunPod single image (main path)
+### RunPod 단일 image (주 경로)
 
-One image runs the UI, the inference server and the Audyssey tools server in one pod.
+image 하나가 pod 안에서 UI, inference server, Audyssey tools server를 함께 실행한다.
 
-- Image: `ghcr.io/gwpark0741/soundpilot:<tag>` (see [Image tags](#image-tags)).
-- GPU: 80 GB, CUDA 12.8 or newer. Container disk 50 GB, network volume 100 GB or more
-  at `/workspace`. Expose HTTP port `8501`.
-- Environment: `V2A_INSPECT_UI_PASSWORD` and `GEMINI_API_KEY` (required),
-  `HF_TOKEN` (first boot only, gated weights), `ELEVENLABS_API_KEY` (ambience SFX).
+- Image: `ghcr.io/gwpark0741/soundpilot:<tag>` ([Image tag](#image-tag) 참고).
+- GPU: 80 GB, CUDA 12.8 이상. Container disk 50 GB, network volume 100 GB 이상을
+  `/workspace`에 연결한다. HTTP port `8501`을 노출한다.
+- 환경 변수: `V2A_INSPECT_UI_PASSWORD`와 `GEMINI_API_KEY` (필수),
+  `HF_TOKEN` (첫 부팅에만 필요, gated weight), `ELEVENLABS_API_KEY` (앰비언스 SFX).
 
-Settings, weight list and first-boot steps: [docs/runpod.md](docs/runpod.md).
-Records live in `/workspace/data`; without a network volume they are lost when the pod
-is terminated, so save a bundle before stopping.
+설정, weight 목록, 첫 부팅 절차: [docs/runpod.md](docs/runpod.md).
+기록은 `/workspace/data`에 저장된다. network volume이 없으면 pod를 terminate할 때
+기록이 사라지므로 중지하기 전에 bundle을 저장한다.
 
-### Server with Docker (sv3)
+### Docker 서버 실행 (sv3)
 
-`compose.demo.yaml` runs `inference`, `tools` and `ui` as three containers on one GPU
-(Hunyuan off, NVENC off, weights read-only from `HF_CACHE`):
+`compose.demo.yaml`은 `inference`, `tools`, `ui`를 container 세 개로 GPU 1장에 올린다
+(Hunyuan off, NVENC off, weight는 `HF_CACHE`에서 읽기 전용):
 
 ```bash
 cp .env.demo.example .env.demo   # fill V2A_GPU_DEVICE, GEMINI_API_KEY, ELEVENLABS_API_KEY, AUDYSSEY_TOOL_TOKEN
@@ -69,11 +68,11 @@ docker compose -f compose.demo.yaml --env-file .env.demo up -d
 uv run python scripts/demo_preflight.py --gpu <N> --warmup <video> [<video> ...]
 ```
 
-`--warmup` loads the tools models before the first real call. See
-[docs/demo-runbook.md](docs/demo-runbook.md) and
-[docs/demo-measurements.md](docs/demo-measurements.md).
+`--warmup`은 첫 실제 호출 전에 tools model을 로드한다.
+[docs/demo-runbook.md](docs/demo-runbook.md)와
+[docs/demo-measurements.md](docs/demo-measurements.md)를 참고한다.
 
-### Local development
+### 로컬 개발
 
 ```bash
 cp .env.example .env
@@ -82,89 +81,87 @@ uv sync --project server
 (cd web && npm ci && npm run build)
 ```
 
-The UI serves the built frontend from `web/dist`, so the build step is required
-before `v2a ui` shows anything. Use Node 20.19+ or 22.12+ (Vite 7).
+UI는 `web/dist`의 build된 frontend를 서비스하므로 `v2a ui`로 화면을 보려면 build 단계가
+필요하다. Node는 20.19+ 또는 22.12+를 사용한다 (Vite 7).
 
-Add a Gemini API key to `.env`, then start the inference server and UI in
-the repository-owned virtual environments with one command:
+`.env`에 Gemini API key를 추가한 뒤, 저장소가 관리하는 가상 환경에서 inference server와
+UI를 한 번에 시작한다.
 
 ```bash
 ./scripts/start-local.sh
 ```
 
-This runs both processes as the invoking host user, using `.venv` for the UI
-and `server/.venv` for GPU inference. Press `Ctrl+C` to stop both. It does not start
-the Audyssey tools server; Generate (SelSync) and Separate need one, with
-`V2A_INSPECT_AUDYSSEY_TOOLS_URL` and `V2A_INSPECT_AUDYSSEY_TOOL_TOKEN` set.
+이 스크립트는 실행한 host 사용자 권한으로 두 process를 실행하며, UI는 `.venv`를,
+GPU inference는 `server/.venv`를 사용한다. `Ctrl+C`를 누르면 둘 다 종료된다.
+Audyssey tools server는 시작하지 않는다. Generate (SelSync)와 Separate에는 tools server가
+필요하므로 `V2A_INSPECT_AUDYSSEY_TOOLS_URL`과 `V2A_INSPECT_AUDYSSEY_TOOL_TOKEN`을 설정한다.
 
-Open `http://127.0.0.1:8501` (password login if `V2A_INSPECT_UI_PASSWORD` is set).
-The UI flow is:
+`http://127.0.0.1:8501`을 연다 (`V2A_INSPECT_UI_PASSWORD`가 설정되어 있으면 password 로그인).
+UI 흐름은 다음과 같다.
 
-1. **Open video**: "Analyze a new video" (runs SAM3 + agent) or "Load a saved project"
-   (a bundle zip).
-2. Choose **Generate** or **Separate** in the top bar, then press **Generate audio** /
-   **Separate audio**.
-3. Timeline lanes are the track list: select a lane for the selected-track panel
-   (Description, Regenerate / Re-separate / Generate instead, residual switch), use
-   Play and Solo per lane, and edit events.
-4. Preview the mixed video; Open video > Advanced has **Download video (MP4)**.
-   **Save bundle** exports the whole project as a zip for **Load a saved project**.
+1. **Open video**: "Analyze a new video" (SAM3 + agent 실행) 또는 "Load a saved project"
+   (bundle zip).
+2. 상단 바에서 **Generate** 또는 **Separate**를 고른 뒤 **Generate audio** /
+   **Separate audio**를 누른다.
+3. Timeline의 lane이 곧 track 목록이다. lane을 선택하면 selected-track 패널
+   (Description, Regenerate / Re-separate / Generate instead, residual switch)이 열린다.
+   lane마다 Play와 Solo를 쓰고 event를 편집한다.
+4. mix된 영상을 미리 본다. Open video > Advanced에 **Download video (MP4)**가 있다.
+   **Save bundle**은 project 전체를 zip으로 내보내며, **Load a saved project**로 다시 열 수 있다.
 
-Switching the mode only changes the stored mode; tracks are re-routed on the next
-main-button run. Kokoro downloads its model on first use when selected.
+mode를 전환하면 저장된 mode만 바뀌며, track은 다음 main 버튼 실행에서 다시 라우팅된다.
+Kokoro를 선택하면 첫 사용 때 model을 다운로드한다.
 
-CLI entrypoints (the package and command names are unchanged):
+CLI entrypoint (package와 command 이름은 그대로이다):
 
-- `uv run v2a run VIDEO`: analyze a video and export a `VideoAsset` JSON.
-- `uv run v2a ui`: open the upload, timeline-editing, generation, and preview UI.
-- `uv run v2a synthesize`: generate audio from an exported asset or timeline.
-- `uv run --project server v2a-inspect-server serve`: run the inference API.
+- `uv run v2a run VIDEO`: 영상을 분석하고 `VideoAsset` JSON을 내보낸다.
+- `uv run v2a ui`: 업로드, timeline 편집, 생성, 미리보기 UI를 연다.
+- `uv run v2a synthesize`: 내보낸 asset 또는 timeline에서 오디오를 생성한다.
+- `uv run --project server v2a-inspect-server serve`: inference API를 실행한다.
 
-These are one-shot CLI/UI entrypoints. The sound-timeline inference stage uses
-LangGraph internally; it is not an interactive CLI loop.
+이들은 한 번 실행하고 끝나는 CLI/UI entrypoint이다. sound-timeline inference 단계는
+내부적으로 LangGraph를 사용하며, 대화형 CLI loop는 아니다.
 
-Plain `docker compose up --build` (`docker-compose.yaml`) starts only the UI and the
-inference server, with the UI on `http://127.0.0.1:8501`. Set `V2A_DOCKER_UID`,
-`V2A_DOCKER_GID` (`id -u`, `id -g`) and `V2A_GPU_DEVICE` in `.env`. It has no tools
-server, so use `compose.demo.yaml` for Generate/Separate.
+`docker compose up --build` (`docker-compose.yaml`)는 UI와 inference server만 시작하며
+UI는 `http://127.0.0.1:8501`에서 열린다. `.env`에 `V2A_DOCKER_UID`, `V2A_DOCKER_GID`
+(`id -u`, `id -g`)와 `V2A_GPU_DEVICE`를 설정한다. tools server가 없으므로
+Generate/Separate에는 `compose.demo.yaml`을 사용한다.
 
-## Image tags
+## Image tag
 
-| Tag | Built | Status |
+| Tag | Build 방식 | 상태 |
 |---|---|---|
-| `demo-20261123` | on sv3 | Verified end to end on a GPU. The presentation version; the safe choice until a release note says otherwise. |
-| `latest` | automatically by GitHub Actions on every merge to main | Moves with main. The first auto-built image (`000a20c`) passed the same GPU end-to-end check on 2026-11-24; later merges are only build-checked, not GPU-checked. |
-| `<commit sha>` | automatically, same build as `latest` for that commit | Pin one change when you want to try it on RunPod. |
+| `demo-20261123` | sv3에서 build | GPU에서 end-to-end 검증 완료. 발표용 버전이며, release note가 다르게 안내하기 전까지는 이 tag가 안전하다. |
+| `latest` | main에 merge될 때마다 GitHub Actions가 자동 build | main을 따라 움직인다. 처음 자동 build된 image(`000a20c`)는 2026-11-24에 같은 GPU end-to-end 검사를 통과했다. 이후 merge는 build만 확인했고 GPU에서는 확인하지 않았다. |
+| `<commit sha>` | 자동 build, 해당 commit의 `latest`와 같은 build | RunPod에서 변경 하나만 시험하려고 고정할 때 사용한다. |
 
-The tools part of every image is the pinned `ghcr.io/gwpark0741/soundpilot-tools:demo-1117`.
+모든 image의 tools 부분은 고정된 `ghcr.io/gwpark0741/soundpilot-tools:demo-1117`이다.
 
-## Development workflow
+## 개발 workflow
 
-`main` is protected (ruleset "main protection"): changes go in through a pull request,
-the four checks below must pass, force pushes and deletion are blocked, and no
-approval is required.
+`main`은 ruleset("main protection")으로 보호된다. 변경은 pull request를 거쳐야 하고,
+아래 네 가지 검사가 통과해야 하며, force push와 삭제는 막혀 있고, approval은 필요하지 않다.
 
-1. Branch from `main` (`git switch -c feat/<topic>`).
-2. Commit and push the branch, then open a PR to `main`.
-3. `ci-lint` runs on the PR:
-   - `ruff check`, `ruff format --check` and `ty check` on `src/` and `server/src/`
-   - backend `pytest` (with ffmpeg)
-   - web `npm test` and `npm run build` (Node 22)
-   - a build check of the UI and server images (no push)
-4. When the checks pass, merge the PR.
-5. A merge that changes code or Docker files (`src/`, `server/`, `web/`,
-   `scripts/runpod/`, `pyproject.toml`, `uv.lock`, `Dockerfile`, `Dockerfile.runpod`,
-   `.dockerignore`, the publish workflow) triggers Publish Image. It builds the UI and
-   server images from the repo, combines them with the tools image through
-   `Dockerfile.runpod`, and pushes `soundpilot:latest` and `soundpilot:<sha>`
-   (about 25 minutes). Docs-only merges build nothing.
+1. `main`에서 branch를 만든다 (`git switch -c feat/<topic>`).
+2. commit하고 branch를 push한 뒤 `main`을 대상으로 PR을 연다.
+3. PR에서 `ci-lint`가 실행된다.
+   - `src/`와 `server/src/`에 대한 `ruff check`, `ruff format --check`, `ty check`
+   - backend `pytest` (ffmpeg 포함)
+   - web `npm test`와 `npm run build` (Node 22)
+   - UI image와 server image의 build 검사 (push 없음)
+4. 검사가 통과하면 PR을 merge한다.
+5. 코드나 Docker 파일(`src/`, `server/`, `web/`, `scripts/runpod/`, `pyproject.toml`,
+   `uv.lock`, `Dockerfile`, `Dockerfile.runpod`, `.dockerignore`, publish workflow)을
+   바꾼 merge는 Publish Image를 실행한다. 이 workflow는 저장소에서 UI image와 server image를
+   build하고, `Dockerfile.runpod`로 tools image와 합친 뒤 `soundpilot:latest`와
+   `soundpilot:<sha>`를 push한다 (약 25분). 문서만 바꾼 merge는 아무것도 build하지 않는다.
 
-To change the tools version, verify the new Audyssey tools image end to end on a GPU,
-then change `TOOLS_IMAGE` in `.github/workflows/publish-image.yaml`.
+tools 버전을 바꾸려면 새 Audyssey tools image를 GPU에서 end-to-end로 검증한 뒤
+`.github/workflows/publish-image.yaml`의 `TOOLS_IMAGE`를 바꾼다.
 
-Step-by-step guide for teammates (Korean): [docs/contributing.md](docs/contributing.md).
+팀원용 단계별 안내: [docs/contributing.md](docs/contributing.md).
 
-## Tests
+## 테스트
 
 ```bash
 uv run --extra ui --with pytest --with pytest-asyncio python -m pytest -q tests   # 208 passed
@@ -172,63 +169,62 @@ uv run --extra ui --with pytest --with pytest-asyncio python -m pytest -q tests 
 uv run --project server python -m unittest discover server/tests
 ```
 
-Tests must not depend on `.env`: CI has no API keys.
+CI에는 API key가 없으므로 테스트는 `.env`에 의존하면 안 된다.
 
-## Prerequisites
+## 사전 요건
 
-- Linux with an NVIDIA GPU for the inference server (SAM3) and the tools server.
-- A Gemini API key (`GEMINI_API_KEY`) for the analysis and timeline agent.
-- The Audyssey tools server and `ELEVENLABS_API_KEY` for ambience SFX.
-- SAM3 is installed from `facebookresearch/sam3`; its checkpoint may need a
-  Hugging Face account with access (set `HF_TOKEN`).
-- Optional: Hunyuan V2A (`V2A_SERVER_HUNYUAN_ENABLED`, default true in the inference
-  server; about 8 GB of weights on first use). The demo images turn it off.
-- Kokoro TTS downloads its model on first use.
+- inference server(SAM3)와 tools server를 위한 NVIDIA GPU가 있는 Linux.
+- 분석과 timeline agent를 위한 Gemini API key (`GEMINI_API_KEY`).
+- 앰비언스 SFX를 위한 Audyssey tools server와 `ELEVENLABS_API_KEY`.
+- SAM3는 `facebookresearch/sam3`에서 설치한다. checkpoint를 받으려면 접근 권한이 있는
+  Hugging Face 계정이 필요할 수 있다 (`HF_TOKEN` 설정).
+- 선택: Hunyuan V2A (`V2A_SERVER_HUNYUAN_ENABLED`, inference server 기본값은 true이며
+  첫 사용 때 weight 약 8 GB). demo image는 이 기능을 끈다.
+- Kokoro TTS는 첫 사용 때 model을 다운로드한다.
 
-`V2A_INSPECT_TTS_PROVIDER=elevenlabs` selects ElevenLabs TTS instead of Kokoro; the
-current ElevenLabs plan rejects it with 402 `paid_plan_required`.
+`V2A_INSPECT_TTS_PROVIDER=elevenlabs`는 Kokoro 대신 ElevenLabs TTS를 선택한다. 현재
+ElevenLabs plan은 이를 402 `paid_plan_required`로 거부한다.
 
-## Sample data
+## 샘플 데이터
 
-`samples/` holds a 7-second clip and its analyzed `VideoAsset` (scenes, object
-tracks, and an agent-generated sound timeline). The UI dialog takes only a bundle
-zip, so load the sample through the API (`POST /api/asset/import`):
+`samples/`에는 7초 clip과 분석된 `VideoAsset`(scene, object track, agent가 생성한 sound
+timeline)이 있다. UI 대화상자는 bundle zip만 받으므로 샘플은 API(`POST /api/asset/import`)로
+불러온다.
 
 ```bash
 curl -F video=@samples/sample.mp4 -F asset=@samples/sample.video-asset.json \
   http://127.0.0.1:8501/api/asset/import
 ```
 
-If `V2A_INSPECT_UI_PASSWORD` is set, add `-H "Authorization: Bearer $V2A_INSPECT_UI_PASSWORD"`.
-Keyframe images and the SAM3 overlay are not included, so those previews stay empty
-until you run the analysis yourself. Generate/Separate need the tools server (and the
-inference server for analysis).
+`V2A_INSPECT_UI_PASSWORD`가 설정되어 있으면 `-H "Authorization: Bearer $V2A_INSPECT_UI_PASSWORD"`를 추가한다.
+keyframe 이미지와 SAM3 overlay는 포함되어 있지 않으므로, 분석을 직접 실행하기 전까지
+해당 미리보기는 비어 있다. Generate/Separate에는 tools server가 필요하고, 분석에는
+inference server가 필요하다.
 
-## Frontend development
+## Frontend 개발
 
-Run the UI backend and the Vite dev server separately:
+UI backend와 Vite dev server를 따로 실행한다.
 
 ```bash
 uv run v2a ui                  # terminal 1, port 8501
 cd web && npm ci && npm run dev   # terminal 2, proxies /api and /events to 8501
 ```
 
-## Packages / layout
+## Package / 디렉터리 구성
 
-- `src/v2a_inspect/`: main CLI, agent pipeline, editor API, and inference clients.
+- `src/v2a_inspect/`: 메인 CLI, agent pipeline, editor API, inference client.
 - `web/`: React timeline editor.
-- `server/`: GPU inference API for SAM3, Kokoro TTS, and optional Hunyuan V2A.
-- `tests/` and `server/tests/`: regression tests.
-- `Dockerfile`, `server/Dockerfile`: UI and inference server images.
-- `Dockerfile.runpod`: combines the UI, server and tools images into the single RunPod image.
-- `scripts/runpod/`: `start.sh` (pod entrypoint) and `fetch_weights.py` (weight download).
-- `scripts/start-local.sh`, `scripts/demo_preflight.py`, `scripts/run.sh`: local start,
-  demo preflight, and a batch wrapper around `v2a run`.
-- `compose.demo.yaml`, `docker-compose.yaml`: Docker deployments.
-- `.github/workflows/`: `ci-lint.yaml` (PR checks) and `publish-image.yaml` (image build on merge).
+- `server/`: SAM3, Kokoro TTS, 선택 기능인 Hunyuan V2A를 위한 GPU inference API.
+- `tests/`와 `server/tests/`: regression 테스트.
+- `Dockerfile`, `server/Dockerfile`: UI image와 inference server image.
+- `Dockerfile.runpod`: UI, server, tools image를 RunPod 단일 image로 합친다.
+- `scripts/runpod/`: `start.sh` (pod entrypoint)와 `fetch_weights.py` (weight 다운로드).
+- `scripts/start-local.sh`, `scripts/demo_preflight.py`, `scripts/run.sh`: 로컬 시작,
+  demo preflight, `v2a run`을 감싼 batch wrapper.
+- `compose.demo.yaml`, `docker-compose.yaml`: Docker 배포.
+- `.github/workflows/`: `ci-lint.yaml` (PR 검사)과 `publish-image.yaml` (merge 시 image build).
 - `docs/`: [usage](docs/usage.md), [runpod](docs/runpod.md),
   [demo-runbook](docs/demo-runbook.md), [contributing](docs/contributing.md).
 
-Runtime media, generated outputs, virtual environments, and downloaded model
-weights are intentionally ignored by Git. Copy `.env.example` to `.env`; never
-commit real credentials.
+runtime media, 생성된 출력, 가상 환경, 다운로드한 model weight는 의도적으로 Git에서
+제외한다. `.env.example`을 `.env`로 복사해 사용하고, 실제 credential은 commit하지 않는다.
