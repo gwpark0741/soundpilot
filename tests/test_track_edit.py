@@ -30,6 +30,7 @@ from v2a_inspect.models import (
 )
 from v2a_inspect.ui.pipeline import (
     run_audio_generation_pipeline,
+    run_audio_mode_switch,
     run_track_clip_pipeline,
     run_track_delete_pipeline,
     run_track_regeneration_pipeline,
@@ -395,6 +396,35 @@ class TrackEditPipelineTest(unittest.TestCase):
             app.include_router(create_router(store))
             body = TestClient(app).get(f"/api/audio/tracks/{door.sound_track_id}").content
             self.assertEqual(body, door_art.clip_path.read_bytes())
+
+    def test_mode_switch_rebuilds_the_preview_only_when_the_new_timeline_has_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, _ = _asset(root)
+            other = SoundTimeline(
+                sound_tracks=[SoundTrack(track_type="sfx", label="Rain", generation_model="separate")]
+            )
+            asset = asset.model_copy(
+                update={"inactive_timeline": other, "synthesized_video_path": root / "old.mp4"}
+            )
+            store = VideoAssetStore()
+            with patch(
+                "v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix
+            ) as mix:
+                asyncio.run(run_audio_mode_switch(asset, store, "separate"))
+                separate = asyncio.run(store.snapshot()).asset
+                mix.assert_not_called()  # no artifact belongs to the Rain track
+                self.assertIsNone(separate.synthesized_video_path)
+                self.assertEqual(
+                    separate.sound_track_audio_artifacts, asset.sound_track_audio_artifacts
+                )
+
+                asyncio.run(run_audio_mode_switch(separate, store, "generate"))
+            snapshot = asyncio.run(store.snapshot())
+            mix.assert_called_once()
+            self.assertEqual(snapshot.status, "complete")
+            self.assertEqual(snapshot.asset.audio_mode, "generate")
+            self.assertTrue(snapshot.asset.synthesized_video_path.exists())
 
     def test_removing_the_clip_drops_the_edited_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

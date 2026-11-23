@@ -799,6 +799,30 @@ async def run_residual_toggle_pipeline(
         await store.set_error("Could not change the rest of original audio.")
 
 
+async def run_audio_mode_switch(
+    video_asset: VideoAsset,
+    store: VideoAssetStore,
+    mode: Literal["generate", "separate"],
+) -> None:
+    """Swap the timelines; when the active one has audio, re-render the preview the swap dropped."""
+    video_asset = switch_audio_mode(video_asset, mode)
+    stage = f"Audio mode: {mode.capitalize()}"
+    timeline = video_asset.sound_timeline
+    track_ids = {t.sound_track_id for t in timeline.sound_tracks} if timeline else set()
+    if timeline and any(a.sound_track_id in track_ids for a in video_asset.sound_track_audio_artifacts):
+        try:
+            await store.set_running(stage="mixing audio")
+            audio_plan = build_audio_plan(
+                timeline, fps=video_asset.fps, total_duration=video_asset.duration_sec
+            )
+            video_asset = await _rebuild_audio_outputs(
+                video_asset, audio_plan, video_asset.sound_event_audio_artifacts, store
+            )
+        except Exception:  # noqa: BLE001 - the switch itself succeeded; the preview stays cleared.
+            logging.getLogger(__name__).exception("Preview rebuild after the mode switch failed")
+    await store.set_complete_asset(video_asset, stage=stage)
+
+
 async def run_track_clip_pipeline(
     video_asset: VideoAsset,
     store: VideoAssetStore,

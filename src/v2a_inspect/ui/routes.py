@@ -19,7 +19,6 @@ from v2a_inspect.audio_generation.routing import route_tracks
 from v2a_inspect.models import SoundTimeline, VideoAsset
 from v2a_inspect.preprocessing import prepare_video
 from v2a_inspect.preprocessing.video import extract_original_audio
-from v2a_inspect.separation_planning import switch_audio_mode
 
 from .bundle import read_bundle, write_bundle
 from .overlays import render_tracking_overlay
@@ -28,6 +27,7 @@ from .pipeline import (
     run_sound_timeline_pipeline,
     run_uploaded_video_pipeline,
     run_audio_generation_pipeline,
+    run_audio_mode_switch,
     run_event_audio_delete_pipeline,
     run_event_audio_regeneration_pipeline,
     run_residual_toggle_pipeline,
@@ -403,9 +403,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             background_tasks.add_task(run_separation_planning_pipeline, asset, store)
             return {"status": "queued"}
         # The preview video changed with the mode, so the media reloads (asset_version bump).
-        await store.set_complete_asset(
-            switch_audio_mode(asset, mode), stage=f"Audio mode: {mode.capitalize()}"
-        )
+        await run_audio_mode_switch(asset, store, mode)
         return {"status": "ok"}
 
     @router.post("/api/audio/residual")
