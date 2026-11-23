@@ -50,13 +50,15 @@ class VideoAssetStore:
     async def set_complete_asset(
         self, video_asset: VideoAsset, *, stage: str | None = None
     ) -> None:
+        # Saved before the state is published, but outside the lock: /api/video range
+        # requests and SSE must not wait for the disk write.
+        await asyncio.to_thread(save_project_logged, video_asset)
         async with self._condition:
             self._asset = video_asset
             self._status = "complete"
             self._current_stage = stage
             self._error = None
             self._asset_version += 1
-            await asyncio.to_thread(save_project_logged, video_asset)
             self._bump_locked()
 
     async def publish_asset_mutation(
@@ -78,11 +80,13 @@ class VideoAssetStore:
 
     async def set_complete(self, *, stage: str = "complete") -> None:
         async with self._condition:
+            asset = self._asset
+        if asset is not None:
+            await asyncio.to_thread(save_project_logged, asset)
+        async with self._condition:
             self._status = "complete"
             self._current_stage = stage
             self._error = None
-            if self._asset is not None:
-                await asyncio.to_thread(save_project_logged, self._asset)
             self._bump_locked()
 
     async def set_error(self, error: str, *, stage: str | None = None) -> None:
