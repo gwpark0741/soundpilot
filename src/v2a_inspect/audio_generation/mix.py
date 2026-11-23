@@ -12,9 +12,13 @@ AudioPlan 기반으로 생성된 오디오 파일들을 원본 비디오에 합�
 from __future__ import annotations
 
 import logging
+import os
+import shutil
+import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
+import av
 from moviepy import AudioFileClip, CompositeAudioClip, VideoFileClip
 from moviepy.audio.fx import MultiplyVolume, AudioFadeOut
 
@@ -125,13 +129,15 @@ def mix_audio_into_video(
         # 비디오 출력
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         logger.info("Writing mixed video: %s (%d tracks)", output_path, n_mixed)
-        video.write_videofile(
-            output_path,
-            audio_codec="aac",
-            fps=video.fps,
-            temp_audiofile_path=str(Path(output_path).parent),
-            logger=None,
-        )
+        # The video stream is unchanged by mixing: copy it when the browser can play it as is.
+        if not _mux_copying_video(video_path, final_audio, output_path):
+            video.write_videofile(
+                output_path,
+                audio_codec="aac",
+                fps=video.fps,
+                temp_audiofile_path=str(Path(output_path).parent),
+                logger=None,
+            )
 
         # 리소스 정리
         video.close()
@@ -144,6 +150,59 @@ def mix_audio_into_video(
     except Exception as e:
         logger.error("Failed to mix video: %s", e)
         return None
+
+
+def _is_browser_h264_mp4(video_path: str) -> bool:
+    try:
+        with av.open(video_path) as container:
+            stream = container.streams.video[0]
+            return (
+                "mp4" in container.format.name
+                and stream.codec_context.name == "h264"
+                and stream.codec_context.pix_fmt == "yuv420p"
+            )
+    except Exception:  # noqa: BLE001 - anything unreadable takes the re-encode path.
+        return False
+
+
+def _mux_copying_video(video_path: str, audio, output_path: str) -> bool:
+    """Write `output_path` as the source's H.264 stream (copied) plus `audio` as AAC.
+
+    The video keeps its own keyframes, and faststart puts the index first, so the preview
+    seeks like the source and no frame is re-encoded. The audio is padded or cut to the
+    video length. Returns False (nothing written) when the copy is not possible.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None or not _is_browser_h264_mp4(video_path):
+        return False
+    out = Path(output_path)
+    wav = out.with_name(f".{out.stem}.mix.wav")
+    tmp = out.with_name(f".{out.stem}.tmp.mp4")
+    try:
+        audio.write_audiofile(str(wav), fps=44100, codec="pcm_s16le", logger=None)
+        result = subprocess.run(
+            [
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                "-i", video_path, "-i", str(wav),
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-c:v", "copy", "-c:a", "aac", "-af", "apad", "-shortest",
+                "-movflags", "+faststart", str(tmp),
+            ],  # fmt: skip
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0 or not tmp.exists():
+            logger.warning("ffmpeg mux failed, re-encoding: %s", result.stderr.strip())
+            return False
+        os.replace(tmp, out)  # a player reading the old preview never sees a half-written file
+        return True
+    except Exception as e:  # noqa: BLE001 - the re-encode path still works.
+        logger.warning("ffmpeg mux failed, re-encoding: %s", e)
+        return False
+    finally:
+        wav.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
 
 
 def mix_audio_items_to_wav(
