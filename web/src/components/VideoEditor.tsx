@@ -2,6 +2,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import OpenVideoDialog from "./OpenVideoDialog";
 import Timeline from "./Timeline";
 import SelectedTrackPanel from "./SelectedTrackPanel";
+import AnalysisPanel from "./AnalysisPanel";
+import { summarizeScenes } from "../lib/analysis";
 import Stage from "./Stage";
 import TopBar from "./TopBar";
 import { fetchAssetForExport, fetchTrackingWindow } from "../api";
@@ -104,6 +106,10 @@ export default function VideoEditor({
   const selectedTrack = soundTracks.find((track) => track.sound_track_id === selectedTrackId);
   const highlightSceneTrackIds = highlightFor(selectedTrackId, state.track_targets);
   const objects = useMemo(() => buildObjects(timelineRows, draftAsset), [timelineRows, draftAsset]);
+  const sceneSummaries = useMemo(
+    () => summarizeScenes(timelineRows, objects.sceneTrackColors),
+    [timelineRows, objects.sceneTrackColors],
+  );
   const trackColors: Record<string, string> = {};
   for (const track of soundTracks) {
     trackColors[track.sound_track_id] = objects.soundTrackColor(track, state.track_targets);
@@ -693,6 +699,14 @@ export default function VideoEditor({
             onRegenerateEvent={(id, description, spokenText) =>
               void regenerateEventFromPanel(id, description, spokenText)
             }
+          />
+        ) : sceneSummaries.length ? (
+          <AnalysisPanel
+            scenes={sceneSummaries}
+            fps={fps}
+            frame={selectedFrame}
+            soundTrackCount={soundTracks.length}
+            onSelectFrame={selectFrame}
           />
         ) : null}
         <p className="sr" role="status">
