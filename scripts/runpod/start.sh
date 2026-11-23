@@ -18,6 +18,9 @@ if ! "$PY" /app/runpod/fetch_weights.py --check; then
 fi
 export HF_HUB_OFFLINE=1
 unset HF_TOKEN  # keep it out of the three servers' environments
+# The server base image sets TRANSFORMERS_CACHE=/data/model-cache/transformers; it would
+# override HF_HOME for transformers (flan-t5 for SelSync and SAM Audio), so drop it.
+unset TRANSFORMERS_CACHE
 
 TOOL_TOKEN="${AUDYSSEY_TOOL_TOKEN:-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
 pids=()
