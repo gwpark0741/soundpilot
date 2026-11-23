@@ -313,7 +313,7 @@ export default function Timeline({
   }
 
   return (
-    <section className="tl panel" aria-label="Timeline">
+    <section className="tl panel" aria-label="Timeline" onDragStart={(event) => event.preventDefault()}>
       <div className="lane ruler">
         <div className="lane-label-sp edit-mode">
           <div className="modes" role="radiogroup" aria-label="Timeline edit mode">

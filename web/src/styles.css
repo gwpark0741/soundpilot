@@ -146,7 +146,7 @@ h1, h2, h3, p { margin: 0; }
 .switch[aria-checked="true"] .knob { translate: 16px 0; }
 
 /* timeline (object colour comes from the inline --oc on .lane) */
-.tl { display: grid; align-content: start; max-height: 38vh; overflow-y: auto; overscroll-behavior: contain; }
+.tl { display: grid; align-content: start; max-height: 38vh; overflow-y: auto; overscroll-behavior: contain; user-select: none; }
 .empty-lane { padding: 16px 12px; color: var(--muted); }
 .lane { display: grid; grid-template-columns: clamp(300px, 30vw, 400px) minmax(0, 1fr); align-items: stretch; border-bottom: 1px solid var(--border); }
 .lane-head { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 8px 4px 4px; border-inline-end: 1px solid var(--border); }
