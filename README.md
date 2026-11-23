@@ -1,230 +1,138 @@
 # SoundPilot
 
-**SoundPilot은 multitrack 사운드 디자인을 위한 tool-calling agent 시스템이다** (team
-sogang V2A). 영상을 편집 가능한 multitrack sound timeline으로 바꾸고, track마다 알맞은
-오디오 모델로 소리를 생성하거나 원본 오디오에서 분리한 뒤, 결과를 영상에 mix한다.
+영상을 넣으면 장면 속 객체와 움직임을 분석해 **편집 가능한 멀티트랙 사운드**를 만들어 주는 에이전트 시스템입니다. (팀 sogang V2A)
 
-제품 이름은 SoundPilot이다 (UI 제목과 Docker image). Python package 이름은 그대로
-`v2a_inspect`이고 CLI 이름은 그대로 `v2a`이다.
+- 소리를 트랙 단위로 나눠 만들기 때문에, 원하는 소리만 골라 고치고 다시 만들 수 있습니다.
+- 소리 종류에 따라 생성 모델을 고릅니다. 동작 효과음은 영상 기반 생성(V2A), 배경음은 텍스트 기반 생성(T2A), 대사는 TTS를 씁니다.
+- 원본 오디오가 있는 영상은 생성 대신 원본에서 소리를 분리할 수도 있습니다.
+
+> 코드 안의 Python 패키지 이름은 `v2a_inspect`, CLI 이름은 `v2a`로 그대로입니다.
+
+## 바로 실행하기
+
+팀원은 **RunPod pod 하나**로 실행하는 방법을 쓰면 됩니다. 브라우저만 있으면 됩니다.
+
+| 항목 | 값 |
+|---|---|
+| 이미지 | `ghcr.io/gwpark0741/soundpilot:demo-20261123` |
+| GPU | 80 GB 1장 (A100 80GB 또는 H100), CUDA 12.8 이상 |
+| 디스크 | Container disk 50 GB 이상, Network volume 100 GB 이상을 `/workspace`에 연결 |
+| 포트 | HTTP `8501` |
+| 환경변수 | `V2A_INSPECT_UI_PASSWORD`(접속 비밀번호), `GEMINI_API_KEY`, `HF_TOKEN`(첫 부팅에 가중치 다운로드), `ELEVENLABS_API_KEY` |
+
+처음 켜면 모델 가중치 약 41 GB를 받습니다. 로그에 `all services are up`이 나오면 8501 포트로 접속합니다. 자세한 설정과 주의 사항은 [docs/runpod.md](docs/runpod.md)에 있습니다.
+
+다른 실행 방법:
+
+- **GPU 서버에서 Docker로 실행** (sv3): `compose.demo.yaml`로 서비스 3개를 띄웁니다. → [docs/demo-runbook.md](docs/demo-runbook.md)
+- **로컬 개발 환경**: 아래 [로컬 개발](#로컬-개발) 절을 봅니다.
+
+## 사용 흐름
+
+1. **Open video**로 영상을 올리면 장면 분석, 객체 추적, 사운드 계획이 자동으로 진행됩니다.
+2. 상단에서 **Generate**(생성) 또는 **Separate**(분리)를 고르고 실행합니다.
+3. 타임라인에서 트랙별로 듣고 고칩니다.
+   - **Edit spans**: 소리가 날 구간(이벤트 박스)을 옮기거나 늘이고 줄입니다.
+   - **Edit audio**: 만들어진 소리를 자르거나 옮깁니다. 원본은 남아 있어 언제든 되돌릴 수 있습니다.
+   - **Add track / Delete track**: 트랙을 추가하거나 지웁니다. 추가할 때는 타임라인에서 구간을 직접 그립니다.
+   - 오른쪽 패널에서 설명을 고쳐 그 트랙만 다시 만듭니다. 구간을 고친 트랙은 **Regenerate with new spans**로 다시 만듭니다.
+4. 결과는 **Save bundle**(프로젝트 zip)이나 **Download video (MP4)**로 받습니다. zip은 **Load a saved project**로 다시 엽니다.
+
+화면별 자세한 사용법은 [docs/usage.md](docs/usage.md)에 있습니다.
 
 ## 동작 방식
 
-1. PySceneDetect가 영상을 scene으로 나눈다.
-2. Gemini가 scene마다 분석한다.
-3. SAM3가 object를 tracking하고 visual event를 만든다.
-4. Gemini sound-timeline agent가 소리를 source / track / event로 계획한다.
-5. 라우팅이 track마다 오디오 모델(Generate) 또는 분리(Separate)를 지정한다.
-6. track별 오디오를 만들어 영상에 mix한다.
-
-## 기능
-
-- **Generate mode** (기본), track별 라우팅:
-  - 화면에 보이고 화면과 타이밍을 맞추는 SFX: SelVA w/ SelSync (Audyssey tools server, track당 stem 하나).
-  - 앰비언스와 화면 밖 source: ElevenLabs SFX.
-  - 음성: Kokoro TTS (영어만 지원).
-  - event 구간 안에서 무음인 SelSync stem은 전체 실행에서 ElevenLabs로 대체된다.
-    track 단위 재생성에서는 대체하지 않고 표시만 한다.
-- **Separate mode** (원본 오디오 필요): Gemini가 원본 오디오를 듣고 source를 계획한다
-  (Audyssey planning-evidence-v3, source별 오디오 검증 포함).
-  SAM Audio가 각 source를 분리하며, 구간(span)을 positive anchor로 사용한다. 후보 8개를
-  CLAP과 SAM Audio Judge로 rerank한다. source는 SAM3 object와 연결된다 (이름으로 먼저,
-  다음으로 box IoU). residual(원본에서 stem을 뺀 나머지)은 켜고 끌 수 있다.
-- **편집**: "Edit spans"는 event 박스를 이동하고 크기를 조절한다 (생성과 분리의 입력이 된다).
-  "Edit audio"는 stem을 바꾸지 않고 각 track의 clip을 자르고 이동한다.
-  "Add track"은 span을 여러 개 받고 모델은 SelSync / ElevenLabs / Kokoro / SAM Audio 중에서 고른다.
-  "Delete track"은 track을 지운다. "Regenerate with new spans"는 편집한 track만 다시 생성한다.
-- UI의 **Analysis panel**과 **project history** (Recent projects).
-- **공유**: Save bundle (zip, 10초 clip당 약 30-40 MB)과 Download video (MP4).
-  bundle은 "Load a saved project"로 연다.
-
-알려진 제한: 분리를 실행하면 생성된 오디오가 교체된다 (둘 다 필요하면 Generate를 먼저
-실행한다). Kokoro는 영어만 지원한다. 앰비언스는 scene마다 나뉠 수 있다.
-UI 사용 안내: [docs/usage.md](docs/usage.md).
-
-## 실행 방법
-
-### RunPod 단일 image (주 경로)
-
-image 하나가 pod 안에서 UI, inference server, Audyssey tools server를 함께 실행한다.
-
-- Image: `ghcr.io/gwpark0741/soundpilot:<tag>` ([Image tag](#image-tag) 참고).
-- GPU: 80 GB, CUDA 12.8 이상. Container disk 50 GB, network volume 100 GB 이상을
-  `/workspace`에 연결한다. HTTP port `8501`을 노출한다.
-- 환경 변수: `V2A_INSPECT_UI_PASSWORD`와 `GEMINI_API_KEY` (필수),
-  `HF_TOKEN` (첫 부팅에만 필요, gated weight), `ELEVENLABS_API_KEY` (앰비언스 SFX).
-
-설정, weight 목록, 첫 부팅 절차: [docs/runpod.md](docs/runpod.md).
-기록은 `/workspace/data`에 저장된다. network volume이 없으면 pod를 terminate할 때
-기록이 사라지므로 중지하기 전에 bundle을 저장한다.
-
-### Docker 서버 실행 (sv3)
-
-`compose.demo.yaml`은 `inference`, `tools`, `ui`를 container 세 개로 GPU 1장에 올린다
-(Hunyuan off, NVENC off, weight는 `HF_CACHE`에서 읽기 전용):
-
-```bash
-cp .env.demo.example .env.demo   # fill V2A_GPU_DEVICE, GEMINI_API_KEY, ELEVENLABS_API_KEY, AUDYSSEY_TOOL_TOKEN
-docker compose -f compose.demo.yaml --env-file .env.demo up -d
-uv run python scripts/demo_preflight.py --gpu <N> --warmup <video> [<video> ...]
+```
+영상 → 장면 분할(PySceneDetect) → 장면 분석(Gemini) → 객체 추적(SAM3)
+     → 사운드 계획 에이전트(Gemini: 소리 원천 / 트랙 / 이벤트)
+     → 트랙별 생성 또는 분리 → 영상에 mix
 ```
 
-`--warmup`은 첫 실제 호출 전에 tools model을 로드한다.
-[docs/demo-runbook.md](docs/demo-runbook.md)와
-[docs/demo-measurements.md](docs/demo-measurements.md)를 참고한다.
+| 모드 | 소리 종류 | 사용 모델 |
+|---|---|---|
+| Generate | 화면 속 동작 효과음 | SelVA w/ SelSync (Audyssey tools) |
+| Generate | 배경음, 화면 밖 소리 | ElevenLabs SFX |
+| Generate | 대사 | Kokoro TTS (영어) |
+| Separate | 원본 속 각 소리 | Gemini가 원본을 듣고 분리 계획 → SAM Audio로 분리 (후보 8개 중 최고 점수 선택) |
 
-### 로컬 개발
+- SelSync 결과가 이벤트 구간에서 무음이면, 전체 생성 때는 ElevenLabs로 자동 대체합니다. 트랙 하나만 다시 만들 때는 대체하지 않고 실패로 표시합니다.
+- 분리된 소리는 이름과 위치를 기준으로 SAM3 객체와 연결되어, 화면에 해당 객체가 표시됩니다.
+
+## 알려진 한계
+
+- 분리를 실행하면 생성 결과를 덮어씁니다. 시연할 때는 생성을 먼저, 분리를 나중에 보여 줍니다.
+- 음성(Kokoro)은 영어만 지원합니다.
+- 생성 타임라인에서 배경음이 장면마다 나뉘어 나올 수 있습니다.
+- 효과음 분리는 배경음악이 강한 영상에서 약합니다.
+
+## 이미지 태그
+
+| 태그 | 만드는 곳 | 용도 |
+|---|---|---|
+| `demo-20261123` | sv3에서 직접 빌드, GPU 검증 완료 | 발표·시연용. 기본으로 이 태그를 씁니다 |
+| `latest` | main에 merge될 때마다 GitHub가 자동 빌드 | 최신 코드 확인용 |
+| `<커밋 해시>` | 위와 같음 | 특정 변경을 RunPod에서 확인할 때 |
+
+자동 빌드는 이미지가 만들어지는지만 확인하고, GPU에서 실행해 보지는 않습니다. 첫 자동 빌드(`000a20c`)는 2026-11-24 sv3 GPU에서 전체 흐름 검증을 통과했습니다.
+
+## 코드를 고칠 때
+
+main은 보호되어 있어 직접 push할 수 없습니다. 아래 순서로 반영합니다.
+
+1. main에서 브랜치를 만듭니다. (`git switch -c feat/<주제>`)
+2. 수정 후 push하고 main으로 PR을 엽니다.
+3. PR에서 검사 4개가 자동으로 돕니다. 모두 통과해야 merge할 수 있습니다.
+   - `lint-and-format-check`: ruff, ty
+   - `tests`: 백엔드 pytest
+   - `web`: 웹 테스트와 빌드
+   - `docker-build`: UI·서버 이미지 빌드 확인
+4. merge하면 코드나 Docker 파일이 바뀐 경우에만 RunPod 이미지가 자동으로 빌드되어 `soundpilot:latest`, `soundpilot:<커밋 해시>`로 올라갑니다. 약 25분 걸립니다.
+
+팀원용 단계별 안내는 [docs/contributing.md](docs/contributing.md)에 있습니다.
+
+Audyssey tools 부분은 이 레포에 코드가 없어서, 검증한 이미지 `ghcr.io/gwpark0741/soundpilot-tools:demo-1117`을 고정해서 씁니다. tools를 바꾸려면 새 버전을 GPU에서 전체 흐름으로 검증한 뒤 `.github/workflows/publish-image.yaml`의 `TOOLS_IMAGE`를 바꿉니다.
+
+## 로컬 개발
 
 ```bash
-cp .env.example .env
+cp .env.example .env          # GEMINI_API_KEY 등 입력
 uv sync --extra ui
 uv sync --project server
 (cd web && npm ci && npm run build)
+./scripts/start-local.sh      # inference 서버 + UI, Ctrl+C로 종료
 ```
 
-UI는 `web/dist`의 build된 frontend를 서비스하므로 `v2a ui`로 화면을 보려면 build 단계가
-필요하다. Node는 20.19+ 또는 22.12+를 사용한다 (Vite 7).
+`http://127.0.0.1:8501`로 접속합니다. 생성과 분리에는 Audyssey tools 서버가 따로 필요하므로(`V2A_INSPECT_AUDYSSEY_TOOLS_URL`, `V2A_INSPECT_AUDYSSEY_TOOL_TOKEN`), 전체 기능은 RunPod 이미지나 `compose.demo.yaml`로 확인하는 편이 쉽습니다.
 
-`.env`에 Gemini API key를 추가한 뒤, 저장소가 관리하는 가상 환경에서 inference server와
-UI를 한 번에 시작한다.
+웹 화면만 고칠 때는 두 터미널에서 실행합니다.
 
 ```bash
-./scripts/start-local.sh
+uv run v2a ui                          # 백엔드, 8501
+cd web && npm ci && npm run dev        # Vite 개발 서버, /api와 /events를 8501로 전달
 ```
-
-이 스크립트는 실행한 host 사용자 권한으로 두 process를 실행하며, UI는 `.venv`를,
-GPU inference는 `server/.venv`를 사용한다. `Ctrl+C`를 누르면 둘 다 종료된다.
-Audyssey tools server는 시작하지 않는다. Generate (SelSync)와 Separate에는 tools server가
-필요하므로 `V2A_INSPECT_AUDYSSEY_TOOLS_URL`과 `V2A_INSPECT_AUDYSSEY_TOOL_TOKEN`을 설정한다.
-
-`http://127.0.0.1:8501`을 연다 (`V2A_INSPECT_UI_PASSWORD`가 설정되어 있으면 password 로그인).
-UI 흐름은 다음과 같다.
-
-1. **Open video**: "Analyze a new video" (SAM3 + agent 실행) 또는 "Load a saved project"
-   (bundle zip).
-2. 상단 바에서 **Generate** 또는 **Separate**를 고른 뒤 **Generate audio** /
-   **Separate audio**를 누른다.
-3. Timeline의 lane이 곧 track 목록이다. lane을 선택하면 selected-track 패널
-   (Description, Regenerate / Re-separate / Generate instead, residual switch)이 열린다.
-   lane마다 Play와 Solo를 쓰고 event를 편집한다.
-4. mix된 영상을 미리 본다. Open video > Advanced에 **Download video (MP4)**가 있다.
-   **Save bundle**은 project 전체를 zip으로 내보내며, **Load a saved project**로 다시 열 수 있다.
-
-mode를 전환하면 저장된 mode만 바뀌며, track은 다음 main 버튼 실행에서 다시 라우팅된다.
-Kokoro를 선택하면 첫 사용 때 model을 다운로드한다.
-
-CLI entrypoint (package와 command 이름은 그대로이다):
-
-- `uv run v2a run VIDEO`: 영상을 분석하고 `VideoAsset` JSON을 내보낸다.
-- `uv run v2a ui`: 업로드, timeline 편집, 생성, 미리보기 UI를 연다.
-- `uv run v2a synthesize`: 내보낸 asset 또는 timeline에서 오디오를 생성한다.
-- `uv run --project server v2a-inspect-server serve`: inference API를 실행한다.
-
-이들은 한 번 실행하고 끝나는 CLI/UI entrypoint이다. sound-timeline inference 단계는
-내부적으로 LangGraph를 사용하며, 대화형 CLI loop는 아니다.
-
-`docker compose up --build` (`docker-compose.yaml`)는 UI와 inference server만 시작하며
-UI는 `http://127.0.0.1:8501`에서 열린다. `.env`에 `V2A_DOCKER_UID`, `V2A_DOCKER_GID`
-(`id -u`, `id -g`)와 `V2A_GPU_DEVICE`를 설정한다. tools server가 없으므로
-Generate/Separate에는 `compose.demo.yaml`을 사용한다.
-
-## Image tag
-
-| Tag | Build 방식 | 상태 |
-|---|---|---|
-| `demo-20261123` | sv3에서 build | GPU에서 end-to-end 검증 완료. 발표용 버전이며, release note가 다르게 안내하기 전까지는 이 tag가 안전하다. |
-| `latest` | main에 merge될 때마다 GitHub Actions가 자동 build | main을 따라 움직인다. 처음 자동 build된 image(`000a20c`)는 2026-11-24에 같은 GPU end-to-end 검사를 통과했다. 이후 merge는 build만 확인했고 GPU에서는 확인하지 않았다. |
-| `<commit sha>` | 자동 build, 해당 commit의 `latest`와 같은 build | RunPod에서 변경 하나만 시험하려고 고정할 때 사용한다. |
-
-모든 image의 tools 부분은 고정된 `ghcr.io/gwpark0741/soundpilot-tools:demo-1117`이다.
-
-## 개발 workflow
-
-`main`은 ruleset("main protection")으로 보호된다. 변경은 pull request를 거쳐야 하고,
-아래 네 가지 검사가 통과해야 하며, force push와 삭제는 막혀 있고, approval은 필요하지 않다.
-
-1. `main`에서 branch를 만든다 (`git switch -c feat/<topic>`).
-2. commit하고 branch를 push한 뒤 `main`을 대상으로 PR을 연다.
-3. PR에서 `ci-lint`가 실행된다.
-   - `src/`와 `server/src/`에 대한 `ruff check`, `ruff format --check`, `ty check`
-   - backend `pytest` (ffmpeg 포함)
-   - web `npm test`와 `npm run build` (Node 22)
-   - UI image와 server image의 build 검사 (push 없음)
-4. 검사가 통과하면 PR을 merge한다.
-5. 코드나 Docker 파일(`src/`, `server/`, `web/`, `scripts/runpod/`, `pyproject.toml`,
-   `uv.lock`, `Dockerfile`, `Dockerfile.runpod`, `.dockerignore`, publish workflow)을
-   바꾼 merge는 Publish Image를 실행한다. 이 workflow는 저장소에서 UI image와 server image를
-   build하고, `Dockerfile.runpod`로 tools image와 합친 뒤 `soundpilot:latest`와
-   `soundpilot:<sha>`를 push한다 (약 25분). 문서만 바꾼 merge는 아무것도 build하지 않는다.
-
-tools 버전을 바꾸려면 새 Audyssey tools image를 GPU에서 end-to-end로 검증한 뒤
-`.github/workflows/publish-image.yaml`의 `TOOLS_IMAGE`를 바꾼다.
-
-팀원용 단계별 안내: [docs/contributing.md](docs/contributing.md).
 
 ## 테스트
 
 ```bash
-uv run --extra ui --with pytest --with pytest-asyncio python -m pytest -q tests   # 208 passed
-(cd web && npm test && npm run build)                                             # 21 passed, Node 22
+uv run --extra ui --with pytest --with pytest-asyncio python -m pytest -q tests
 uv run --project server python -m unittest discover server/tests
+(cd web && npm test && npm run build)  # Node 22
 ```
 
-CI에는 API key가 없으므로 테스트는 `.env`에 의존하면 안 된다.
+테스트는 `.env`의 API 키 없이 통과해야 합니다. CI에는 키가 없습니다.
 
-## 사전 요건
+## 디렉터리 구성
 
-- inference server(SAM3)와 tools server를 위한 NVIDIA GPU가 있는 Linux.
-- 분석과 timeline agent를 위한 Gemini API key (`GEMINI_API_KEY`).
-- 앰비언스 SFX를 위한 Audyssey tools server와 `ELEVENLABS_API_KEY`.
-- SAM3는 `facebookresearch/sam3`에서 설치한다. checkpoint를 받으려면 접근 권한이 있는
-  Hugging Face 계정이 필요할 수 있다 (`HF_TOKEN` 설정).
-- 선택: Hunyuan V2A (`V2A_SERVER_HUNYUAN_ENABLED`, inference server 기본값은 true이며
-  첫 사용 때 weight 약 8 GB). demo image는 이 기능을 끈다.
-- Kokoro TTS는 첫 사용 때 model을 다운로드한다.
+| 경로 | 내용 |
+|---|---|
+| `src/v2a_inspect/` | 분석 파이프라인, 사운드 계획 에이전트, 생성·분리 연동, UI 백엔드 |
+| `web/` | React 타임라인 편집 화면 |
+| `server/` | GPU inference 서버 (SAM3, Kokoro) |
+| `Dockerfile`, `server/Dockerfile` | UI 이미지, 서버 이미지 |
+| `Dockerfile.runpod`, `scripts/runpod/` | RunPod 단일 이미지와 시작·가중치 다운로드 스크립트 |
+| `docker-compose.yaml`, `compose.demo.yaml` | 서버에서 여러 컨테이너로 실행할 때 (전체 기능은 `compose.demo.yaml`) |
+| `.github/workflows/` | PR 검사(`ci-lint.yaml`), 이미지 자동 빌드(`publish-image.yaml`) |
+| `docs/` | 사용법, RunPod, 시연 절차, 기여 안내 |
+| `tests/`, `server/tests/` | 테스트 |
 
-`V2A_INSPECT_TTS_PROVIDER=elevenlabs`는 Kokoro 대신 ElevenLabs TTS를 선택한다. 현재
-ElevenLabs plan은 이를 402 `paid_plan_required`로 거부한다.
-
-## 샘플 데이터
-
-`samples/`에는 7초 clip과 분석된 `VideoAsset`(scene, object track, agent가 생성한 sound
-timeline)이 있다. UI 대화상자는 bundle zip만 받으므로 샘플은 API(`POST /api/asset/import`)로
-불러온다.
-
-```bash
-curl -F video=@samples/sample.mp4 -F asset=@samples/sample.video-asset.json \
-  http://127.0.0.1:8501/api/asset/import
-```
-
-`V2A_INSPECT_UI_PASSWORD`가 설정되어 있으면 `-H "Authorization: Bearer $V2A_INSPECT_UI_PASSWORD"`를 추가한다.
-keyframe 이미지와 SAM3 overlay는 포함되어 있지 않으므로, 분석을 직접 실행하기 전까지
-해당 미리보기는 비어 있다. Generate/Separate에는 tools server가 필요하고, 분석에는
-inference server가 필요하다.
-
-## Frontend 개발
-
-UI backend와 Vite dev server를 따로 실행한다.
-
-```bash
-uv run v2a ui                  # terminal 1, port 8501
-cd web && npm ci && npm run dev   # terminal 2, proxies /api and /events to 8501
-```
-
-## Package / 디렉터리 구성
-
-- `src/v2a_inspect/`: 메인 CLI, agent pipeline, editor API, inference client.
-- `web/`: React timeline editor.
-- `server/`: SAM3, Kokoro TTS, 선택 기능인 Hunyuan V2A를 위한 GPU inference API.
-- `tests/`와 `server/tests/`: regression 테스트.
-- `Dockerfile`, `server/Dockerfile`: UI image와 inference server image.
-- `Dockerfile.runpod`: UI, server, tools image를 RunPod 단일 image로 합친다.
-- `scripts/runpod/`: `start.sh` (pod entrypoint)와 `fetch_weights.py` (weight 다운로드).
-- `scripts/start-local.sh`, `scripts/demo_preflight.py`, `scripts/run.sh`: 로컬 시작,
-  demo preflight, `v2a run`을 감싼 batch wrapper.
-- `compose.demo.yaml`, `docker-compose.yaml`: Docker 배포.
-- `.github/workflows/`: `ci-lint.yaml` (PR 검사)과 `publish-image.yaml` (merge 시 image build).
-- `docs/`: [usage](docs/usage.md), [runpod](docs/runpod.md),
-  [demo-runbook](docs/demo-runbook.md), [contributing](docs/contributing.md).
-
-runtime media, 생성된 출력, 가상 환경, 다운로드한 model weight는 의도적으로 Git에서
-제외한다. `.env.example`을 `.env`로 복사해 사용하고, 실제 credential은 commit하지 않는다.
+`.env`에는 실제 키가 들어가므로 커밋하지 않습니다. 실행 결과물, 가상환경, 모델 가중치도 Git에 올리지 않습니다.
