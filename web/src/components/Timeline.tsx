@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import Icon, { STATUS_ICON } from "./Icon";
 import type { ObjectLane } from "../lib/objects";
 import { clipPeaks, clipPlacement, dragClip, isFullClip, resolveClip, type Clip, type ClipDrag } from "../lib/clip";
@@ -515,7 +515,12 @@ interface ClipBlockProps {
 function ClipBlock({ audioTrack, clip, timelineSec, interactive, editable, ...handlers }: ClipBlockProps) {
   const place = clipPlacement(clip, timelineSec);
   const style = { left: `${place.left}%`, width: `${place.width}%` };
-  const wave = <Waveform peaks={clipPeaks(audioTrack.waveform_peaks, clip, audioTrack.duration_sec)} />;
+  // Stable while the clip and the stem are, so Waveform is not rebuilt at video frame rate.
+  const peaks = useMemo(
+    () => clipPeaks(audioTrack.waveform_peaks, clip, audioTrack.duration_sec),
+    [audioTrack.waveform_peaks, audioTrack.duration_sec, clip.start, clip.end],
+  );
+  const wave = <Waveform peaks={peaks} />;
   if (!interactive) {
     return (
       <div aria-hidden="true" className="clip-wave" style={style}>
@@ -547,26 +552,32 @@ function ClipBlock({ audioTrack, clip, timelineSec, interactive, editable, ...ha
   );
 }
 
-function Waveform({ peaks }: { peaks: number[] }) {
-  if (peaks.length === 0) {
+const Waveform = memo(function Waveform({ peaks }: { peaks: number[] }) {
+  const polygon = useMemo(() => {
+    if (peaks.length === 0) {
+      return null;
+    }
+    const sampled = peaks.length > 384 ? samplePeaks(peaks, 384) : peaks;
+    const top = sampled.map((peak, index) => `${index},${(12 - clamp(peak, 0, 1) * 11.5).toFixed(1)}`);
+    const bottom = sampled
+      .map((peak, index) => `${index},${(12 + clamp(peak, 0, 1) * 11.5).toFixed(1)}`)
+      .reverse();
+    return { points: [...top, ...bottom].join(" "), width: Math.max(sampled.length - 1, 1) };
+  }, [peaks]);
+  if (!polygon) {
     return null;
   }
-  const sampled = peaks.length > 384 ? samplePeaks(peaks, 384) : peaks;
-  const top = sampled.map((peak, index) => `${index},${(12 - clamp(peak, 0, 1) * 11.5).toFixed(1)}`);
-  const bottom = sampled
-    .map((peak, index) => `${index},${(12 + clamp(peak, 0, 1) * 11.5).toFixed(1)}`)
-    .reverse();
   return (
     <svg
       aria-hidden="true"
       className="wave"
       preserveAspectRatio="none"
-      viewBox={`0 0 ${Math.max(sampled.length - 1, 1)} 24`}
+      viewBox={`0 0 ${polygon.width} 24`}
     >
-      <polygon points={[...top, ...bottom].join(" ")} />
+      <polygon points={polygon.points} />
     </svg>
   );
-}
+});
 
 function groupRows(
   rows: TimelineRow[],
