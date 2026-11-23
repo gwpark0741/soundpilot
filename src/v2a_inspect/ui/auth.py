@@ -162,7 +162,7 @@ def _login_html(error: str | None = None) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>V2A Inspect Login</title>
+  <title>SoundPilot Login</title>
   <style>
     body {{
       margin: 0;
@@ -193,7 +193,7 @@ def _login_html(error: str | None = None) -> str:
 </head>
 <body>
   <form method="post" action="/login">
-    <h1>V2A Inspect</h1>
+    <h1>SoundPilot</h1>
     {error_html}
     <label>
       Password

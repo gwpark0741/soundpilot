@@ -80,7 +80,7 @@ export default function TopBar({
   return (
     <header className="top">
       <div className="brand">
-        <h1>V2A Inspect</h1>
+        <h1>SoundPilot</h1>
         {hasAudio === null ? null : <span className="in-badge">{hasAudio ? "Original audio" : "Silent video"}</span>}
       </div>
       <div className="top-btns">

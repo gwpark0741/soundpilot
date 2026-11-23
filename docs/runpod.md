@@ -20,7 +20,7 @@ UI, inference server, Audyssey tools server를 하나의 image(`Dockerfile.runpo
 | CUDA | driver 570 이상 (CUDA 12.8 이상). 두 torch가 모두 `cu128` build이다. RunPod template의 CUDA 필터를 12.8 이상으로 둔다. |
 | Container disk | 50 GB 이상 (triton cache, 임시 영상) |
 | Network volume | 100 GB 이상, mount path `/workspace` (가중치 약 41 GB + 작업 데이터) |
-| Image | `ghcr.io/gwpark0741/v2a-inspect-runpod:<tag>` |
+| Image | `ghcr.io/gwpark0741/soundpilot:<tag>` |
 | Container start command | 비워 둔다 (image의 `CMD`가 `start.sh`를 실행) |
 | Expose HTTP port | `8501` |
 
@@ -90,12 +90,12 @@ docker save audyssey-tools:demo-1117 | tar -x -C $O/tools
 
 TAG=demo-$(date +%Y%m%d)
 BUILDX_BUILDER=audyssey-builder docker buildx build -f Dockerfile.runpod \
-  -t ghcr.io/gwpark0741/v2a-inspect-runpod:$TAG --load \
+  -t ghcr.io/gwpark0741/soundpilot:$TAG --load \
   --build-context v2a-inspect-server:demo=oci-layout://$O/server:demo \
   --build-context v2a-inspect:demo=oci-layout://$O/ui:demo \
   --build-context audyssey-tools:demo-1117=oci-layout://$O/tools:demo-1117 .
 
-docker push ghcr.io/gwpark0741/v2a-inspect-runpod:$TAG
+docker push ghcr.io/gwpark0741/soundpilot:$TAG
 ```
 
 세 source image가 registry에 있으면 build context 없이 build arg로 지정한다: `--build-arg SERVER_IMAGE=... --build-arg UI_IMAGE=... --build-arg TOOLS_IMAGE=...`.

@@ -13,7 +13,7 @@ FROM ${TOOLS_IMAGE} AS tools
 
 FROM ${SERVER_IMAGE}
 
-LABEL org.opencontainers.image.source="https://github.com/gwpark0741/v2a_inspect" \
+LABEL org.opencontainers.image.source="https://github.com/gwpark0741/soundpilot" \
       org.opencontainers.image.description="v2a_inspect demo: UI + inference server + Audyssey tools in one container"
 
 USER root
