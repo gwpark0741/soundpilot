@@ -6,7 +6,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 이미지 | `v2a-inspect:demo` (`06d50a8ad286`, 2026-11-23 파형 dB 표시 반영), `v2a-inspect-server:demo` (`7cccf9e9eac9`), `audyssey-tools:demo-1117` (`cc603e8ffc46`) |
+| 이미지 | `v2a-inspect:demo` (`6737c9d2c6c0`, 2026-11-23 track 편집 반영), `v2a-inspect-server:demo` (`e6a0d2338b4c`, Kokoro spaCy 모델 포함), `audyssey-tools:demo-1117` (`cc603e8ffc46`). 단일 image `v2a-inspect-runpod:demo-20261123` (`d05787899fc3`)는 [docs/runpod.md](runpod.md) 참고 |
 | 가중치 | `/home/common/huggingface` (read-only 마운트, `HF_HUB_OFFLINE=1`) |
 | GPU | 다른 사용자의 process가 없는 GPU 1장 |
 
