@@ -684,6 +684,18 @@ export default function VideoEditor({
 
   const mp4Ready = state.status === "complete" && !!baseAsset?.synthesized_video_path && !hasTimelineEdits;
   const mp4Href = `/api/synthesized-video?asset_version=${state.asset_version}`;
+  // Changing the player's src reloads it and jumps to 0, so the src follows the files, not the edit state:
+  // the previous preview stays while a re-render runs, and a new URL appears only when a run completes.
+  const sourceRef = useRef({ videoId: "", original: "", preview: null as string | null });
+  const source = sourceRef.current;
+  if (source.videoId !== (videoId ?? "")) {
+    source.videoId = videoId ?? "";
+    source.original = `/api/video?asset_version=${state.asset_version}`;
+    source.preview = null;
+  }
+  if (state.status === "complete") {
+    source.preview = baseAsset?.synthesized_video_path ? mp4Href : null;
+  }
 
   return (
     <div className="app">
@@ -719,7 +731,7 @@ export default function VideoEditor({
               tracks={trackWindow?.tracks ?? []}
               video={video}
               videoRef={videoRef}
-              videoSrc={mp4Ready ? mp4Href : `/api/video?asset_version=${state.asset_version}`}
+              videoSrc={source.preview ?? source.original}
             />
           ) : (
             <div className="empty-video">Open a video to start</div>

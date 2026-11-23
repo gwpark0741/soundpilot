@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useRef, type RefObject } from "react";
 import Icon from "./Icon";
 import TrackingOverlay from "./TrackingOverlay";
 import type { TrackWindowTrack, VideoSummary } from "../types";
@@ -44,6 +44,33 @@ export default function Stage({
   onVideoSync,
   onVideoPlayState,
 }: StageProps) {
+  // A new src reloads the element: remember where it was so it can pick up from there.
+  const resumeRef = useRef<{ time: number; paused: boolean } | null>(null);
+  const shownSrcRef = useRef(videoSrc);
+  if (shownSrcRef.current !== videoSrc) {
+    shownSrcRef.current = videoSrc;
+    const element = videoRef.current;
+    resumeRef.current = element ? { time: element.currentTime, paused: element.paused } : null;
+  }
+  // The reload resets the element to 0 and pauses it without a pause event.
+  const syncPlayState = () => onVideoPlayState?.(!videoRef.current?.paused);
+  const syncFrame = () => {
+    if (!resumeRef.current) {
+      onVideoSync?.();
+    }
+  };
+  const resume = () => {
+    const element = videoRef.current;
+    const saved = resumeRef.current;
+    resumeRef.current = null;
+    if (element && saved) {
+      element.currentTime = saved.time;
+      if (!saved.paused) {
+        element.play().catch(() => {});
+      }
+    }
+    syncPlayState();
+  };
   const fps = video.fps || 30;
   const timeText = `${(frame / fps).toFixed(2)} s / ${video.duration_sec.toFixed(2)} s`;
   const hasMask = highlightSceneTrackIds.length > 0;
@@ -61,10 +88,12 @@ export default function Stage({
           <video
             ref={videoRef}
             src={videoSrc}
+            onEmptied={syncPlayState}
+            onLoadedMetadata={resume}
             onPause={() => onVideoPlayState?.(false)}
             onPlay={() => onVideoPlayState?.(true)}
-            onSeeked={onVideoSync}
-            onTimeUpdate={onVideoSync}
+            onSeeked={syncFrame}
+            onTimeUpdate={syncFrame}
           />
           <TrackingOverlay
             video={video}
