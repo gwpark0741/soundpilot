@@ -155,14 +155,27 @@ export default function VideoEditor({
         : (baseAsset?.sound_track_audio_artifacts ?? state.audio_tracks ?? []),
     [baseAsset, hasTimelineEdits, state.audio_tracks],
   );
+  // Scrubbing fires many selectFrame calls: the video gets at most one seek per animation frame, none while
+  // it is still seeking, and the last target is applied on `seeked`.
+  const seekTargetRef = useRef<number | null>(null);
+  const seekRafRef = useRef<number | null>(null);
+  function flushSeek() {
+    seekRafRef.current = null;
+    const videoElement = videoRef.current;
+    if (!videoElement || seekTargetRef.current === null || videoElement.seeking) {
+      return;
+    }
+    videoElement.currentTime = seekTargetRef.current;
+    seekTargetRef.current = null;
+  }
   const selectFrame = useCallback(
     (nextFrame: number) => {
       stopPreviewAudio(true);
       const next = clamp(nextFrame, 0, maxFrame);
       setFrame(next);
-      const videoElement = videoRef.current;
-      if (videoElement) {
-        videoElement.currentTime = next / fps;
+      seekTargetRef.current = next / fps;
+      if (seekRafRef.current === null) {
+        seekRafRef.current = window.requestAnimationFrame(flushSeek);
       }
     },
     [fps, maxFrame],
@@ -213,6 +226,9 @@ export default function VideoEditor({
 
   useEffect(() => {
     return () => {
+      if (seekRafRef.current !== null) {
+        window.cancelAnimationFrame(seekRafRef.current);
+      }
       stopPreviewAudio(true);
       for (const audio of audioCacheRef.current.values()) {
         audio.pause();
@@ -321,6 +337,14 @@ export default function VideoEditor({
     if (!video) {
       return;
     }
+    if (seekTargetRef.current !== null) {
+      // A scrub target is waiting for the previous seek to finish.
+      flushSeek();
+      return;
+    }
+    if (!video.paused) {
+      return; // playing: the animation-frame loop above keeps the frame in sync
+    }
     setFrame(clamp(Math.round(video.currentTime * fps), 0, maxFrame));
   }
 
@@ -366,6 +390,7 @@ export default function VideoEditor({
     const videoStartTime = nextFrame / fps;
     setFrame(nextFrame);
 
+    seekTargetRef.current = null; // the explicit seek below replaces a pending scrub target
     const audio = preloadAudio(url);
     audio.pause();
     try {
