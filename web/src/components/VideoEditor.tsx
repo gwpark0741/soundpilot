@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import AddTrackDialog from "./AddTrackDialog";
 import OpenVideoDialog from "./OpenVideoDialog";
 import Timeline from "./Timeline";
 import SelectedTrackPanel from "./SelectedTrackPanel";
@@ -6,7 +7,8 @@ import AnalysisPanel from "./AnalysisPanel";
 import { summarizeScenes } from "../lib/analysis";
 import Stage from "./Stage";
 import TopBar from "./TopBar";
-import { fetchAssetForExport, fetchTrackingWindow } from "../api";
+import { fetchAssetForExport, fetchTrackingWindow, type NewTrack } from "../api";
+import { isFullClip, type Clip } from "../lib/clip";
 import { buildObjects } from "../lib/objects";
 import { trackWindowNeedsFetch } from "../lib/trackWindow";
 import { fallbackMatchLabel, highlightFor, objectColor, reconcileSelection, soloToggleAction, transportAction } from "../lib/selection";
@@ -42,6 +44,10 @@ interface VideoEditorProps {
   ) => Promise<void> | void;
   onSetAudioMode?: (mode: "generate" | "separate") => Promise<void> | void;
   onSetResidual?: (enabled: boolean) => Promise<void> | void;
+  onSetTrackClip?: (trackId: string, clip: Clip) => Promise<void> | void;
+  onDeleteTrack?: (trackId: string) => Promise<void> | void;
+  // Adds the track and starts generating its audio.
+  onCreateTrack?: (track: NewTrack) => Promise<string | void> | void;
 }
 
 export function regenerateBlockedReason(
@@ -75,11 +81,17 @@ export default function VideoEditor({
   onRegenerateTrack,
   onSetAudioMode,
   onSetResidual,
+  onSetTrackClip,
+  onDeleteTrack,
+  onCreateTrack,
 }: VideoEditorProps) {
   const [frame, setFrame] = useState(0);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [soloTrackId, setSoloTrackId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [addTrackOpen, setAddTrackOpen] = useState(false);
+  // A track just added from the dialog is selected as soon as it shows up in the timeline.
+  const [pendingSelect, setPendingSelect] = useState<string | null>(null);
   const [serverUrl, setServerUrl] = useState("");
   const [panelError, setPanelError] = useState<string | null>(null);
   // submitError as it was when the dialog opened: it came from a non-dialog action, so don't show it there.
@@ -236,13 +248,17 @@ export default function VideoEditor({
 
   // A new video, loaded project or rerun replaces the tracks: drop ids that no longer exist.
   useEffect(() => {
-    setSelectedTrackId((current) =>
-      reconcileSelection(current, soundTracks.map((t) => t.sound_track_id)),
-    );
+    const ids = soundTracks.map((t) => t.sound_track_id);
+    if (pendingSelect && ids.includes(pendingSelect)) {
+      setSelectedTrackId(pendingSelect);
+      setPendingSelect(null);
+      return;
+    }
+    setSelectedTrackId((current) => reconcileSelection(current, ids));
     setSoloTrackId((current) =>
       current && !soundTracks.some((t) => t.sound_track_id === current) ? null : current,
     );
-  }, [selectedTrackId, soundTracks]);
+  }, [selectedTrackId, soundTracks, pendingSelect]);
 
   // Tracking rows are published mid-run without an asset_version bump, so their count is part of the key.
   const trackingCount = state.timeline_rows.filter((row) => row.kind === "track").length;
@@ -557,6 +573,42 @@ export default function VideoEditor({
     return true;
   }
 
+  // Trim/move commit from the timeline: the draft shows the new clip until the saved asset replaces it.
+  async function commitClip(trackId: string, clip: Clip) {
+    if (!onSetTrackClip || regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)) {
+      return;
+    }
+    setPanelError(null);
+    try {
+      await onSetTrackClip(trackId, clip);
+    } catch (error) {
+      setPanelError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    const duration = audioTrackArtifacts.find((a) => a.sound_track_id === trackId)?.duration_sec ?? 0;
+    const full = isFullClip(clip, duration);
+    setDraftAsset((current) =>
+      current?.sound_timeline
+        ? {
+            ...current,
+            sound_timeline: {
+              ...current.sound_timeline,
+              sound_tracks: current.sound_timeline.sound_tracks.map((track) =>
+                track.sound_track_id === trackId
+                  ? {
+                      ...track,
+                      clip_start_sec: full ? null : clip.start,
+                      clip_end_sec: full ? null : clip.end,
+                      clip_offset_sec: full ? 0 : clip.offset,
+                    }
+                  : track,
+              ),
+            },
+          }
+        : current,
+    );
+  }
+
   async function changeAudioMode(mode: "generate" | "separate") {
     // Each mode has its own timeline, so unsaved edits to this one cannot carry over.
     if (hasTimelineEdits && !window.confirm("Switching the audio method discards unsaved timeline edits.")) {
@@ -621,6 +673,15 @@ export default function VideoEditor({
     setHasTimelineEdits(false);
   }
 
+  const editBlockedReason = regenerateBlockedReason(hasTimelineEdits, state.status, state.stage);
+
+  async function createTrack(track: NewTrack) {
+    const id = await onCreateTrack?.(track);
+    if (id) {
+      setPendingSelect(id);
+    }
+  }
+
   const mp4Ready = state.status === "complete" && !!baseAsset?.synthesized_video_path && !hasTimelineEdits;
   const mp4Href = `/api/synthesized-video?asset_version=${state.asset_version}`;
 
@@ -682,6 +743,9 @@ export default function VideoEditor({
           appRunning={state.status === "running"}
           trackColors={trackColors}
           objectLanes={objects.lanes}
+          editBlockedReason={editBlockedReason}
+          onEditClip={commitClip}
+          onAddTrack={onCreateTrack && draftAsset?.sound_timeline ? () => setAddTrackOpen(true) : undefined}
         />
         <div className="side">
         {selectedTrack ? (
@@ -703,6 +767,9 @@ export default function VideoEditor({
               runPanelAction(() => onRegenerateTrack?.(selectedTrack.sound_track_id, method, description))
             }
             onSetResidual={(enabled) => runPanelAction(() => onSetResidual?.(enabled))}
+            onDeleteTrack={
+              onDeleteTrack ? () => runPanelAction(() => onDeleteTrack(selectedTrack.sound_track_id)) : undefined
+            }
             events={(draftAsset?.sound_timeline?.sound_events ?? []).filter(
               (event) => event.sound_track_id === selectedTrack.sound_track_id,
             )}
@@ -725,6 +792,15 @@ export default function VideoEditor({
           {selectedTrack ? `Selected: ${selectedTrack.label}` : ""}
         </p>
       </main>
+      <AddTrackDialog
+        open={addTrackOpen}
+        onClose={() => setAddTrackOpen(false)}
+        hasAudio={baseAsset?.has_audio ?? false}
+        frame={selectedFrame}
+        frameCount={timelineFrameCount}
+        fps={fps}
+        onCreate={createTrack}
+      />
       <OpenVideoDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}

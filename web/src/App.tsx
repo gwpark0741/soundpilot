@@ -12,7 +12,12 @@ import {
   regenerateTrackAudio,
   setAudioMode,
   setResidualEnabled,
+  setTrackClip,
+  deleteTrack,
+  createTrack,
+  type NewTrack,
 } from "./api";
+import type { Clip } from "./lib/clip";
 import { failure } from "./lib/errors";
 import type { VideoAsset } from "./types";
 import VideoEditor from "./components/VideoEditor";
@@ -186,6 +191,48 @@ export default function App() {
     }
   }
 
+  async function handleSetTrackClip(trackId: string, clip: Clip) {
+    setSubmitError(null);
+    try {
+      await setTrackClip(trackId, clip);
+      await refreshAssetSummary();
+    } catch (error) {
+      // Top line: short summary. The full message goes next to the track.
+      setSubmitError("Could not update the track audio.");
+      throw new Error(failure("Could not update the track audio.", error, "Try the edit again."));
+    }
+  }
+
+  async function handleDeleteTrack(trackId: string) {
+    setSubmitError(null);
+    try {
+      await deleteTrack(trackId);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError("Could not delete the track.");
+      throw new Error(failure("Could not delete the track.", error, "Try again in a moment."));
+    }
+  }
+
+  async function handleCreateTrack(track: NewTrack): Promise<string> {
+    setSubmitError(null);
+    let id: string;
+    try {
+      id = await createTrack(track);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError("Could not add the track.");
+      throw new Error(failure("Could not add the track.", error, "Check the fields, then try again."));
+    }
+    // The track exists now; its audio follows through the per-track regenerate flow.
+    try {
+      await handleRegenerateTrack(id, track.model === "separate" ? "separate" : "generate", null);
+    } catch {
+      // The top line already says so, and the track can be regenerated from its panel.
+    }
+    return id;
+  }
+
   return (
     <VideoEditor
       state={state}
@@ -201,6 +248,9 @@ export default function App() {
       onRegenerateTrack={handleRegenerateTrack}
       onSetAudioMode={handleSetAudioMode}
       onSetResidual={handleSetResidual}
+      onSetTrackClip={handleSetTrackClip}
+      onDeleteTrack={handleDeleteTrack}
+      onCreateTrack={handleCreateTrack}
     />
   );
 }

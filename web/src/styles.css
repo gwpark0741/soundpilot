@@ -177,6 +177,17 @@ h1, h2, h3, p { margin: 0; }
 .ev-handle-left { inset-inline-start: -5px; }
 .ev-handle-right { inset-inline-end: -5px; }
 @media (hover: hover) { .ev:hover { background: rgba(255,255,255,.34); } }
+.clip-wave, .clip { position: absolute; top: 0; bottom: 0; }
+.clip { background: rgba(255,255,255,.06); border: 1px solid #c9d0de; border-radius: 3px; cursor: grab; touch-action: none; user-select: none; }
+.clip:active { cursor: grabbing; }
+.clip.locked { cursor: default; }
+.clip-h { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; background: rgba(255,255,255,.28); }
+.clip-h-left { inset-inline-start: 0; border-radius: 2px 0 0 2px; }
+.clip-h-right { inset-inline-end: 0; border-radius: 0 2px 2px 0; }
+.clip-none { position: absolute; inset: 0; display: flex; align-items: center; padding-inline: 8px; color: var(--muted); font-size: 0.75rem; pointer-events: none; }
+.edit-mode { display: flex; align-items: center; padding: 2px 6px; }
+.edit-mode .btn { min-height: 20px; font-size: 0.75rem; padding: 0 8px; }
+.tl-add { padding: 6px 12px; }
 .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; margin-left: -1px; }
 
 /* spinner (motion only when allowed; the label carries the meaning) */
@@ -193,6 +204,9 @@ h1, h2, h3, p { margin: 0; }
 .dlg-sec { display: grid; gap: 8px; padding: 10px; background: var(--raise); border: 1px solid var(--border); border-radius: var(--r-ctl); }
 .dlg-sec h3 { font-size: var(--fs); font-weight: 600; }
 .dlg label { display: grid; gap: 4px; font-size: 0.75rem; color: var(--muted); }
+.dlg-sm { width: min(420px, calc(100vw - 24px)); }
+.dlg-actions { justify-content: flex-end; }
+.dlg select, .dlg textarea { min-width: 0; padding: 4px 8px; background: var(--bg); border: 1px solid var(--ctl-border); border-radius: var(--r-ctl); font: inherit; font-size: var(--fs); color: var(--text); }
 .dlg input:not([type=hidden]) { min-height: 32px; min-width: 0; padding: 4px 8px; background: var(--bg); border: 1px solid var(--ctl-border); border-radius: var(--r-ctl); font-size: var(--fs); color: var(--text); }
 .dlg-empty { font-size: 0.75rem; color: var(--muted); }
 .proj-list { display: grid; gap: 6px; max-height: 220px; overflow-y: auto; list-style: none; margin: 0; padding: 0; }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import Icon, { STATUS_ICON } from "./Icon";
 import type { ObjectLane } from "../lib/objects";
+import { clipPeaks, clipPlacement, dragClip, isFullClip, resolveClip, type Clip, type ClipDrag } from "../lib/clip";
 import { methodLabel, objectColor, statusView } from "../lib/selection";
 import type {
   AudioTrackArtifact,
@@ -31,6 +32,27 @@ interface TimelineProps {
   appRunning: boolean;
   trackColors?: Record<string, string>;
   objectLanes?: ObjectLane[];
+  // Why timeline edits that change the audio (clips, new tracks) are unavailable right now, if they are.
+  editBlockedReason?: string | null;
+  // Commits one finished clip drag; the timeline keeps showing the dragged clip until it settles.
+  onEditClip?: (soundTrackId: string, clip: Clip) => Promise<void> | void;
+  onAddTrack?: () => void;
+}
+
+type EditMode = "spans" | "audio";
+const EDIT_MODES: { mode: EditMode; label: string }[] = [
+  { mode: "spans", label: "Edit spans" },
+  { mode: "audio", label: "Edit audio" },
+];
+
+interface ActiveClipDrag {
+  soundTrackId: string;
+  mode: ClipDrag;
+  startX: number;
+  laneWidth: number;
+  clip: Clip;
+  latest: Clip;
+  stemDuration: number;
 }
 
 interface LaneGroup {
@@ -69,7 +91,13 @@ export default function Timeline({
   appRunning,
   trackColors = {},
   objectLanes = [],
+  editBlockedReason = null,
+  onEditClip,
+  onAddTrack,
 }: TimelineProps) {
+  const [editMode, setEditMode] = useState<EditMode>("spans");
+  const [clipDraft, setClipDraft] = useState<{ soundTrackId: string; clip: Clip } | null>(null);
+  const clipDragRef = useRef<ActiveClipDrag | null>(null);
   // null = automatic: open while running or before any sound lane exists; the toggle overrides.
   const [objectsOpen, setObjectsOpen] = useState<boolean | null>(null);
   const showObjects = objectsOpen ?? (appRunning || soundTracks.length === 0);
@@ -142,6 +170,57 @@ export default function Timeline({
     onSelectFrame(Math.round(ratio * maxPlaybackFrame));
   }
 
+  const videoDuration = frameCount / fps;
+  const timelineSec = timelineEndFrame / fps;
+
+  function startClipDrag(event: PointerEvent<HTMLElement>, soundTrackId: string, clip: Clip, stemDuration: number) {
+    const lane = event.currentTarget.closest(".lane-track");
+    if (!(lane instanceof HTMLElement)) {
+      return;
+    }
+    const handle = event.target instanceof HTMLElement ? event.target.dataset.handle : undefined;
+    clipDragRef.current = {
+      soundTrackId,
+      mode: handle === "left" ? "trim-left" : handle === "right" ? "trim-right" : "move",
+      startX: event.clientX,
+      laneWidth: lane.getBoundingClientRect().width,
+      clip,
+      latest: clip,
+      stemDuration,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function moveClipDrag(event: PointerEvent<HTMLElement>) {
+    const drag = clipDragRef.current;
+    if (!drag) {
+      return;
+    }
+    const deltaSec = ((event.clientX - drag.startX) / Math.max(drag.laneWidth, 1)) * timelineSec;
+    drag.latest = dragClip(drag.mode, drag.clip, deltaSec, drag.stemDuration, videoDuration, fps);
+    setClipDraft({ soundTrackId: drag.soundTrackId, clip: drag.latest });
+    event.stopPropagation(); // the lane would otherwise seek the playhead
+  }
+
+  // One request per drag, on release; the draft stays until the saved asset has replaced it.
+  async function endClipDrag(commit: boolean) {
+    const drag = clipDragRef.current;
+    clipDragRef.current = null;
+    if (!drag || !commit || JSON.stringify(drag.latest) === JSON.stringify(drag.clip)) {
+      setClipDraft(null);
+      return;
+    }
+    try {
+      await onEditClip?.(drag.soundTrackId, drag.latest);
+    } catch {
+      // The caller reports the failure; the clip snaps back to the saved one.
+    } finally {
+      setClipDraft(null);
+    }
+  }
+
   function startSoundEventEdit(
     event: PointerEvent<HTMLElement>,
     row: TimelineRow,
@@ -176,7 +255,27 @@ export default function Timeline({
   return (
     <section className="tl panel" aria-label="Timeline">
       <div className="lane ruler">
-        <div className="lane-label-sp" />
+        <div className="lane-label-sp edit-mode">
+          <div className="modes" role="radiogroup" aria-label="Timeline edit mode">
+            {EDIT_MODES.map(({ mode, label }) => {
+              const blocked = mode === "audio" && editBlockedReason !== null;
+              return (
+                <button
+                  aria-checked={editMode === mode}
+                  className="btn sm"
+                  disabled={blocked}
+                  key={mode}
+                  onClick={() => setEditMode(mode)}
+                  role="radio"
+                  title={blocked ? (editBlockedReason ?? undefined) : undefined}
+                  type="button"
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div
           className="lane-track"
           onPointerDown={selectFrame}
@@ -329,8 +428,26 @@ export default function Timeline({
                   }
                 }}
               >
-                {audioTrack ? <Waveform peaks={audioTrack.waveform_peaks} /> : null}
-                {laneRows.map((row, index) => {
+                {audioTrack ? (
+                  <ClipBlock
+                    audioTrack={audioTrack}
+                    clip={
+                      clipDraft?.soundTrackId === id
+                        ? clipDraft.clip
+                        : resolveClip(soundTrack, audioTrack.duration_sec)
+                    }
+                    editable={editMode === "audio" && !!onEditClip && editBlockedReason === null}
+                    interactive={editMode === "audio"}
+                    onPointerDown={(event, clip) => startClipDrag(event, id, clip, audioTrack.duration_sec)}
+                    onPointerMove={moveClipDrag}
+                    onPointerUp={() => void endClipDrag(true)}
+                    onPointerCancel={() => void endClipDrag(false)}
+                    timelineSec={timelineSec}
+                  />
+                ) : editMode === "audio" ? (
+                  <span className="clip-none">No audio yet</span>
+                ) : null}
+                {(editMode === "spans" ? laneRows : []).map((row, index) => {
                   const bar = barStyle(row, timelineEndFrame);
                   const editable = !!row.sound_event_id && !!onEditSoundEvent;
                   return (
@@ -359,7 +476,69 @@ export default function Timeline({
           );
         })
       )}
+      {onAddTrack ? (
+        <div className="tl-add">
+          <button
+            className="btn sm"
+            disabled={editBlockedReason !== null}
+            onClick={onAddTrack}
+            title={editBlockedReason ?? undefined}
+            type="button"
+          >
+            Add track
+          </button>
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+interface ClipBlockProps {
+  audioTrack: AudioTrackArtifact;
+  clip: Clip;
+  timelineSec: number;
+  // Edit-audio mode: the clip is a draggable block; otherwise it is only the lane's background waveform.
+  interactive: boolean;
+  editable: boolean;
+  onPointerDown: (event: PointerEvent<HTMLElement>, clip: Clip) => void;
+  onPointerMove: (event: PointerEvent<HTMLElement>) => void;
+  onPointerUp: () => void;
+  onPointerCancel: () => void;
+}
+
+// The track's audio as placed on the timeline: the raw peaks cut to the clip, drawn where it plays.
+function ClipBlock({ audioTrack, clip, timelineSec, interactive, editable, ...handlers }: ClipBlockProps) {
+  const place = clipPlacement(clip, timelineSec);
+  const style = { left: `${place.left}%`, width: `${place.width}%` };
+  const wave = <Waveform peaks={clipPeaks(audioTrack.waveform_peaks, clip, audioTrack.duration_sec)} />;
+  if (!interactive) {
+    return (
+      <div aria-hidden="true" className="clip-wave" style={style}>
+        {wave}
+      </div>
+    );
+  }
+  const trimmed = !isFullClip(clip, audioTrack.duration_sec);
+  return (
+    <div
+      aria-label={`${audioTrack.track_label} audio clip, ${clip.start.toFixed(2)} to ${clip.end.toFixed(2)} s, starts at ${(clip.start + clip.offset).toFixed(2)} s`}
+      className={`clip${editable ? "" : " locked"}${trimmed ? " trimmed" : ""}`}
+      onPointerCancel={editable ? handlers.onPointerCancel : undefined}
+      onPointerDown={editable ? (event) => handlers.onPointerDown(event, clip) : undefined}
+      onPointerMove={editable ? handlers.onPointerMove : undefined}
+      onPointerUp={editable ? handlers.onPointerUp : undefined}
+      role="group"
+      style={style}
+      title={editable ? "Drag to move; drag an edge to trim" : undefined}
+    >
+      {wave}
+      {editable ? (
+        <>
+          <span aria-hidden="true" className="clip-h clip-h-left" data-handle="left" />
+          <span aria-hidden="true" className="clip-h clip-h-right" data-handle="right" />
+        </>
+      ) : null}
+    </div>
   );
 }
 

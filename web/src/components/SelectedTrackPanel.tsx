@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import DeleteTrackDialog from "./DeleteTrackDialog";
 import Icon, { STATUS_ICON } from "./Icon";
 import { trackFailureText } from "../lib/errors";
 import { actionMethod, generationLabel, methodLabel, statusView, trackActions, type TrackAction } from "../lib/selection";
@@ -22,6 +23,8 @@ interface SelectedTrackPanelProps {
   onDiscardEdits?: () => void;
   onRegenerate: (method: "separate" | "generate", description: string | null) => void;
   onSetResidual: (enabled: boolean) => void;
+  // Called once the delete dialog is confirmed.
+  onDeleteTrack?: () => void;
   events: SoundEvent[];
   onRegenerateEvent: (eventId: string, description: string, spokenText: string | null) => void;
 }
@@ -89,10 +92,12 @@ export default function SelectedTrackPanel({
   onDiscardEdits,
   onRegenerate,
   onSetResidual,
+  onDeleteTrack,
   events,
   onRegenerateEvent,
 }: SelectedTrackPanelProps) {
   const uid = useId();
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const original = artifact?.description ?? track.description ?? "";
   const [description, setDescription] = useState(original);
   const view = statusView(status, appRunning);
@@ -195,6 +200,28 @@ export default function SelectedTrackPanel({
             <Icon name="info" />
             {blockedReason}
           </p>
+        ) : null}
+        {onDeleteTrack ? (
+          <div className="actions">
+            <button
+              type="button"
+              className="btn sm danger"
+              disabled={blocked}
+              aria-describedby={blocked ? whyId : undefined}
+              onClick={() => setDeleteOpen(true)}
+            >
+              Delete track
+            </button>
+            <DeleteTrackDialog
+              open={deleteOpen}
+              label={track.label}
+              onClose={() => setDeleteOpen(false)}
+              onConfirm={() => {
+                setDeleteOpen(false);
+                onDeleteTrack();
+              }}
+            />
+          </div>
         ) : null}
         {blocked && hasUnsavedEdits && onDiscardEdits ? (
           <div className="actions">

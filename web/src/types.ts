@@ -76,6 +76,7 @@ export interface AudioTrackArtifact {
   seed?: number | null;
   attempt?: number | null;
   description?: string | null;
+  clip_path?: string | null;
 }
 
 export interface VideoSummary {
@@ -179,6 +180,10 @@ export interface SoundTrack {
   generation_model: GenerationModel;
   agent_model?: "t2a" | "v2a" | "tts" | null;
   description?: string | null;
+  // Non-destructive trim/move of the track's audio, in seconds (see lib/clip.ts).
+  clip_start_sec?: number | null;
+  clip_end_sec?: number | null;
+  clip_offset_sec?: number;
   notes?: string | null;
 }
 

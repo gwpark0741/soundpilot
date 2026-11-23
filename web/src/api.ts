@@ -1,3 +1,5 @@
+import type { Clip } from "./lib/clip";
+import type { NewTrackModel } from "./lib/newTrack";
 import type {
   AssetResponse,
   FullAssetResponse,
@@ -193,4 +195,46 @@ export async function setResidualEnabled(enabled: boolean): Promise<void> {
     const message = await response.text();
     throw new Error(message || `Failed to update residual: ${response.status}`);
   }
+}
+
+export async function setTrackClip(trackId: string, clip: Clip): Promise<void> {
+  const response = await fetch(`/api/audio/tracks/${trackId}/clip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(clip),
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to update track audio: ${response.status}`);
+  }
+}
+
+export async function deleteTrack(trackId: string): Promise<void> {
+  const response = await fetch(`/api/audio/tracks/${trackId}`, { method: "DELETE" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to delete track: ${response.status}`);
+  }
+}
+
+export interface NewTrack {
+  label: string;
+  description: string;
+  model: NewTrackModel;
+  spoken_text?: string;
+  start_frame: number;
+  end_frame: number;
+}
+
+export async function createTrack(track: NewTrack): Promise<string> {
+  const response = await fetch("/api/audio/tracks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(track),
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to add track: ${response.status}`);
+  }
+  return (await response.json()).sound_track_id;
 }
