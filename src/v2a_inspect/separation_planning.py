@@ -476,6 +476,12 @@ def validate_plan(
     return issues
 
 
+_TRACK_TYPE: dict[str, Literal["speech", "sfx", "ambience"]] = {
+    "dialogue": "speech",
+    "ambience": "ambience",
+}
+
+
 def to_timeline(
     plans: list[SourcePlan], *, fps: int, frame_count: int
 ) -> SoundTimeline:
@@ -491,9 +497,7 @@ def to_timeline(
         )
         source = SoundSource(source_type=source_type, label=item.name)
         track = SoundTrack(
-            track_type={"dialogue": "speech", "ambience": "ambience"}.get(
-                item.kind, "sfx"
-            ),
+            track_type=_TRACK_TYPE.get(item.kind, "sfx"),
             label=item.name,
             description=item.description,
             sound_source_id=source.sound_source_id,
@@ -536,7 +540,8 @@ def _point_box(point: SceneTrackPoint, frame_size: tuple[int, int]) -> Box | Non
     box = point.bbox_xyxy
     if box is None:
         try:
-            mask = decode_mask_ref(point.mask)  # type: ignore[arg-type]  # a point has a box or a mask
+            assert point.mask is not None  # a point has a box or a mask
+            mask = decode_mask_ref(point.mask)
             ys, xs = np.nonzero(mask)
         except Exception:  # noqa: BLE001 - an unreadable mask only drops this point
             return None
@@ -592,7 +597,7 @@ def link_visual_objects(
     object_of: dict[UUID, UUID] = {}
     head_of: dict[UUID, str] = {}
     for obj in identity.visual_objects:
-        head_of[obj.visual_object_id] = (_words(obj.label) or [""])[-1]
+        head_of[obj.visual_object_id] = (_words(obj.label or "") or [""])[-1]
         for presence in obj.presences:
             if presence.scene_track_id is not None:
                 object_of.setdefault(presence.scene_track_id, obj.visual_object_id)

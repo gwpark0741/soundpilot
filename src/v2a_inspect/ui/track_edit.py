@@ -15,6 +15,7 @@ from v2a_inspect.models import (
 )
 
 NewTrackModel = Literal["selsync", "t2a", "tts", "separate"]
+_AGENT_MODEL: dict[str, Literal["t2a", "v2a", "tts"]] = {"selsync": "v2a", "tts": "tts"}
 
 
 def _timeline(asset: VideoAsset) -> SoundTimeline:
@@ -177,7 +178,7 @@ def add_track(
         label=label,
         sound_source_id=source.sound_source_id,
         generation_model=model,
-        agent_model={"selsync": "v2a", "tts": "tts"}.get(model, "t2a"),
+        agent_model=_AGENT_MODEL.get(model, "t2a"),
         description=description,
     )
     events = [

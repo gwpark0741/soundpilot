@@ -902,6 +902,7 @@ async def run_track_delete_pipeline(
                     update={"residual_path": None, "residual_enabled": False}
                 )
             )
+        assert video_asset.sound_timeline is not None  # delete_track needs one
         audio_plan = build_audio_plan(
             video_asset.sound_timeline,
             fps=video_asset.fps,
@@ -1033,6 +1034,7 @@ async def _generate_track_event_artifacts(
 ) -> list[SoundEventAudioArtifact]:
     """Regenerate every event of a track; files only replace the old ones if all succeed."""
     timeline = video_asset.sound_timeline
+    assert timeline is not None  # callers regenerate tracks of an existing timeline
     plan = build_audio_plan(
         timeline, fps=video_asset.fps, total_duration=video_asset.duration_sec
     )

@@ -315,6 +315,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        assert updated.sound_timeline is not None  # set_clip needs one
         track = next(
             t
             for t in updated.sound_timeline.sound_tracks
@@ -590,7 +591,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         sam3_tracking_path = resolved_video_asset.sam3_tracking_path
         if sam3_tracking_path is not None and not sam3_tracking_path.exists():
             sam3_tracking_path = None
-        update = {
+        update: dict[str, object] = {
             "source_path": resolved_video_asset.source_path,
             "sam3_tracking_path": sam3_tracking_path,
         }
@@ -783,9 +784,17 @@ def _reject_track_level_event(asset: VideoAsset, sound_event_id: str) -> None:
         (e for e in timeline.sound_events if str(e.sound_event_id) == sound_event_id),
         None,
     )
-    track = event and next(
-        (t for t in timeline.sound_tracks if t.sound_track_id == event.sound_track_id),
-        None,
+    track = (
+        None
+        if event is None
+        else next(
+            (
+                t
+                for t in timeline.sound_tracks
+                if t.sound_track_id == event.sound_track_id
+            ),
+            None,
+        )
     )
     if track is not None and track.generation_model in ("separate", "selsync"):
         raise HTTPException(

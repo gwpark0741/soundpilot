@@ -431,7 +431,9 @@ def track_highlight(
         return {}, {}
     layer = video_asset.visual_identity_layer
     objects = [] if layer is None else layer.visual_objects
-    sources = {source.sound_source_id: source for source in timeline.sound_sources}
+    sources: dict[UUID | None, SoundSource] = {
+        source.sound_source_id: source for source in timeline.sound_sources
+    }
 
     def label_of(source: SoundSource) -> str:
         if source.visual_object_id is not None:
