@@ -66,7 +66,7 @@ Peak 약 49.6 GB (inference 약 28.7 GB, tools 약 20.9 GB, ui 0). 한도 70 GB 
 
 ## 6. RunPod backup
 
-세 서비스를 하나의 image(`Dockerfile.runpod`)로 묶어 pod 1개에서 실행한다. 설정, 가중치 목록, build와 push 명령은 [docs/runpod.md](runpod.md)를 따른다. 아직 RunPod GPU에서 실행으로 검증하지 않았다. 유료이며 사용 전 승인이 필요하다.
+세 서비스를 하나의 image(`Dockerfile.runpod`)로 묶어 pod 1개에서 실행한다. 설정, 가중치 목록, build와 push 명령은 [docs/runpod.md](runpod.md)를 따른다. sv3-a100에서 같은 image를 container 1개로 띄워 확인했고, RunPod pod에서는 아직 실행하지 않았다. 유료이며 사용 전 승인이 필요하다.
 
 ## 7. TTS
 

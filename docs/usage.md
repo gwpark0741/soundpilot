@@ -37,8 +37,8 @@ uv run python scripts/demo_preflight.py --gpu <N> --warmup <video>
 
 - 상단 바: "Open video", "Save bundle", 상태 표시, 오디오 방식 선택 "Generate" / "Separate", 실행 버튼 ("Generate audio" / "Separate audio"). 원본 오디오 유무는 "Original audio" / "Silent video" 배지로 표시된다.
 - Stage: 영상 재생과 선택한 track의 object mask 표시.
-- Timeline: lane 하나가 track 하나이며 track 목록을 겸한다. lane마다 method 배지(`Separated`, `SelVA w/ SelSync`, `ElevenLabs`, `ElevenLabs TTS`), 재생 버튼, "Solo" 버튼이 있다.
-- "Selected track" 패널: 선택한 track의 상태, method, seed, Description, 재생성 버튼, "Include rest of original audio" 스위치.
+- Timeline: lane 하나가 track 하나이며 track 목록을 겸한다. lane마다 method 배지(`Separated`, `SelVA w/ SelSync`, `ElevenLabs`, `ElevenLabs TTS`), 재생 버튼, "Solo" 버튼이 있다. 왼쪽 위의 "Edit spans" / "Edit audio"로 편집 대상을 바꾸고, lane 아래의 "Add track"으로 track을 추가한다.
+- "Selected track" 패널: 선택한 track의 상태, method, seed, Description, 재생성 버튼, "Delete track", "Include rest of original audio" 스위치, 분석 결과(Analysis).
 
 ## 3. 작업 순서
 
@@ -52,10 +52,17 @@ uv run python scripts/demo_preflight.py --gpu <N> --warmup <video>
    - 재생성할 때마다 seed가 새로 정해지고 패널에 `Seed N`이 표시된다 (분리는 `Attempt N`). API는 `seed`를 직접 받는다 (`POST /api/audio/tracks/{id}/regenerate`).
    - ElevenLabs 계열(이벤트 단위) track은 이벤트별 Description, Spoken text와 "Regenerate"를 쓴다.
    - 실패하면 "Previous audio kept."가 표시되고 이전 오디오가 유지된다.
-   - 저장하지 않은 timeline 편집이 있으면 재생성이 막히며, "Discard edits"로 편집을 버릴 수 있다.
+   - 구간을 고친 track은 "Regenerate with new spans"로 그 track만 새 구간으로 재생성한다. 다른 track의 저장하지 않은 편집은 그대로 남는다. 상단 "Generate audio"는 모든 편집을 반영해 전체를 다시 만들고, "Discard edits"는 모든 편집을 버린다.
 6. **residual.** Separate에서 residual은 원본 오디오에서 분리된 stem을 뺀 나머지 소리이다. "Include rest of original audio" 스위치로 mix에 포함하거나 뺀다 (원본 오디오가 있을 때만 표시).
 7. **다운로드.** "Open video" > "Advanced"의 "Download video (MP4)"로 mix된 영상을, "Download edited JSON"으로 편집된 asset JSON을 받는다.
 8. **bundle 저장과 불러오기.** "Save bundle"은 project 전체를 zip으로 내려받는다. 다음에는 "Open video" > "Load a saved project"에서 zip을 올린다. 분석 없이 상태와 오디오가 복원된다.
+
+### track 편집
+
+- **구간 편집 ("Edit spans").** 이벤트 박스를 끌어 옮기거나 끝을 끌어 늘이고 줄인다. 이 구간은 생성과 분리의 입력이다. 분리에서는 SAM Audio에 positive anchor로만 들어가며, 결과는 영상 전체 길이이므로 구간 밖에도 소리가 남을 수 있다.
+- **오디오 편집 ("Edit audio").** lane마다 생성된 오디오가 클립 하나로 표시된다. 클립 끝을 끌면 잘리고(trim), 안쪽을 끌면 옮겨진다(move). 원본 오디오는 그대로 두므로 끝을 다시 끌어 처음 길이로 되돌릴 수 있다. 손을 떼면 미리보기를 다시 만든다(약 1초). 자른 경계에는 5 ms fade를 넣는다. 해당 track을 재생성하면 trim과 move는 초기화된다. 저장하지 않은 구간 편집이 있으면 오디오 편집으로 바꿀 수 없다.
+- **track 추가 ("Add track").** 맨 아래에 "New track" 임시 lane이 생기고, 현재 재생 위치부터 2초 구간이 하나 들어간다. 빈 곳을 드래그하면 구간이 추가되고, 구간을 끌면 이동, 끝을 끌면 길이 조정, 더블클릭하면 삭제된다. 오른쪽 양식에 이름, Description, 모델(SelSync, ElevenLabs, Kokoro, SAM Audio)을 넣고, Kokoro는 Spoken text도 넣는다. "Create and generate"는 그 track만 생성하고, "Cancel"은 임시 lane을 지운다.
+- **track 삭제 ("Delete track").** 확인 창에서 "Delete"를 누르면 track, 이벤트, 오디오가 지워지고 미리보기를 다시 만든다. 되돌릴 수 없다.
 
 ### 프로젝트 기록 (Recent projects)
 
@@ -79,7 +86,7 @@ Generate 모드에서 track별 모델은 다음 순서로 정해진다 (`audio_g
 
 agent는 화면에 보이는 물체가 내고 타이밍이 동작에 맞아야 하는 소리(타격, 발소리, 휘두르기, 옷·갑옷 움직임 등)를 v2a로 고르고, ambience, 화면 밖 소리, 숨소리·기합 같은 비언어 음성만 t2a로 고른다 (`prompts/files/system/sound_timeline_agent.txt`).
 
-Separate 모드에서는 모든 track이 분리(SAM Audio) 대상이다. 데모 compose는 TTS로 Kokoro를 쓴다. ElevenLabs TTS는 현재 plan에서 기본 voice가 402(`paid_plan_required`)로 막혀 있다.
+Separate 모드에서는 모든 track이 분리(SAM Audio) 대상이다. 분리 계획이 화면 속 음원에 준 위치 박스(visual hint)는 SAM3 객체와 연결한다. 음원 이름에 나오는 객체(예: "Clashing swords" → sword)를 먼저 고르고, 없으면 박스 IoU로 고른다. 이름에 나오는 객체가 그 시점에 추적되지 않았으면 연결하지 않는다. 데모 compose는 TTS로 Kokoro를 쓴다. ElevenLabs TTS는 현재 plan에서 기본 voice가 402(`paid_plan_required`)로 막혀 있다.
 
 ## 5. 주요 환경 변수
 

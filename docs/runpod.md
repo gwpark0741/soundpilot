@@ -16,7 +16,8 @@ UI, inference server, Audyssey tools server를 하나의 image(`Dockerfile.runpo
 
 | 항목 | 값 |
 |---|---|
-| GPU | 80 GB GPU 1장 (A100 80GB, H100). compose 실측 최대 GPU 메모리가 약 50 GB이므로 48 GB GPU는 권장하지 않는다. |
+| GPU | 80 GB GPU 1장 (A100 80GB, H100). 단일 image에서 분석, 생성, 분리(후보 8개 rerank)를 차례로 실행했을 때 최대 GPU 메모리가 68.5 GB였으므로 48 GB GPU에는 들어가지 않는다. |
+| CUDA | driver 570 이상 (CUDA 12.8 이상). 두 torch가 모두 `cu128` build이다. RunPod template의 CUDA 필터를 12.8 이상으로 둔다. |
 | Container disk | 50 GB 이상 (triton cache, 임시 영상) |
 | Network volume | 100 GB 이상, mount path `/workspace` (가중치 약 41 GB + 작업 데이터) |
 | Image | `ghcr.io/gwpark0741/v2a-inspect-runpod:<tag>` |
@@ -105,4 +106,5 @@ ghcr.io package는 기본이 private이므로, RunPod에서 받으려면 package
 
 - Image는 root로 실행한다. RunPod volume이 root 소유라 별도 사용자를 두면 `/workspace`에 쓸 수 없기 때문이다.
 - 세 runtime(Python 3.12 두 개, 3.13 한 개)과 torch 두 벌이 들어 있어 image가 크다. 하나로 합치지 않은 이유는 각 서비스의 검증된 의존성 조합을 바꾸지 않기 위해서다.
-- RunPod에서의 실제 GPU 실행은 아직 검증하지 않았다.
+- sv3-a100에서 같은 image를 container 1개로 띄워 분석, 생성, Kokoro, 프로젝트 기록, 분리까지 실행해 확인했다 (2026-11-23). RunPod pod에서는 아직 실행하지 않았다.
+- server image가 설정하는 `TRANSFORMERS_CACHE`는 `start.sh`가 지운다. 남아 있으면 tools server가 `HF_HOME` 밖에서 `flan-t5-base`를 찾다가 생성과 분리가 모두 실패한다.
