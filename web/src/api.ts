@@ -1,5 +1,6 @@
 import type { Clip } from "./lib/clip";
 import type { NewTrackModel } from "./lib/newTrack";
+import type { EventSpan, SpanEdit } from "./lib/pendingEdits";
 import type {
   AssetResponse,
   FullAssetResponse,
@@ -155,6 +156,7 @@ export async function regenerateTrackAudio(
   method: "separate" | "generate",
   description?: string,
   seed?: number,
+  events?: EventSpan[],
 ): Promise<void> {
   const formData = new FormData();
   formData.append("method", method);
@@ -163,6 +165,9 @@ export async function regenerateTrackAudio(
   }
   if (seed !== undefined) {
     formData.append("seed", String(seed));
+  }
+  if (events?.length) {
+    formData.append("events", JSON.stringify(events));
   }
   const response = await fetch(`/api/audio/tracks/${trackId}/regenerate`, {
     method: "POST",
@@ -222,8 +227,7 @@ export interface NewTrack {
   description: string;
   model: NewTrackModel;
   spoken_text?: string;
-  start_frame: number;
-  end_frame: number;
+  spans: SpanEdit[];
 }
 
 export async function createTrack(track: NewTrack): Promise<string> {

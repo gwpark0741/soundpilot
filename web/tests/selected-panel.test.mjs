@@ -113,6 +113,22 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   m = html({ blockedReason: edits, hasUnsavedEdits: true, onDiscardEdits() {} });
   assert.match(m, />Discard edits</);
   assert.doesNotMatch(m, /btn primary/);
+  // pending span edits of this track: the track action is labelled for them, event Regenerate is off
+  m = html({ track: track({ generation_model: "t2a" }), events: [{ sound_event_id: "e1", description: "Hi", spoken_text: null }], pendingSpans: true, hasUnsavedEdits: true, onDiscardEdits() {} });
+  assert.match(m, />Regenerate with new spans</);
+  assert.match(m, /Span edits are pending\. Regenerate the track to apply them\./);
+  assert.match(m, /disabled=""[^>]*>Regenerate<\/button>/);  // the event row
+  assert.doesNotMatch(m.replace(/<button[^>]*disabled[^>]*>Regenerate<\/button>/g, ""), /disabled=""[^>]*>Regenerate with new spans/);
+  assert.match(m, />Discard edits</);
+  m = html({ pendingSpans: true });  // separated track: its own method is the labelled one
+  assert.match(m, />Regenerate with new spans</);
+  assert.match(m, />Generate instead</);
+  assert.doesNotMatch(m, /Span edits are pending/);  // track-level tracks have no event rows to block
+  // edits of another track only: nothing is blocked, Discard stays available
+  m = html({ track: track({ generation_model: "selsync" }), hasUnsavedEdits: true, onDiscardEdits() {} });
+  assert.match(m, />Regenerate</);
+  assert.doesNotMatch(m, /disabled=""/);
+  assert.match(m, />Discard edits</);
   // not when the block is a running generation, or when there is nothing to discard
   m = html({ blockedReason: "Generating 2 of 4. Actions are unavailable until it finishes.", appRunning: true, hasUnsavedEdits: false, onDiscardEdits() {} });
   assert.doesNotMatch(m, /Discard edits/);

@@ -9,6 +9,7 @@ import Stage from "./Stage";
 import TopBar from "./TopBar";
 import { fetchAssetForExport, fetchTrackingWindow, type NewTrack } from "../api";
 import { isFullClip, type Clip } from "../lib/clip";
+import { reapplyPending, trackEventSpans, withoutEvents, type EventSpan, type PendingSpans } from "../lib/pendingEdits";
 import { buildObjects } from "../lib/objects";
 import { trackWindowNeedsFetch } from "../lib/trackWindow";
 import { fallbackMatchLabel, highlightFor, objectColor, reconcileSelection, soloToggleAction, transportAction } from "../lib/selection";
@@ -41,6 +42,7 @@ interface VideoEditorProps {
     trackId: string,
     method: "separate" | "generate",
     description: string | null,
+    events?: EventSpan[],
   ) => Promise<void> | void;
   onSetAudioMode?: (mode: "generate" | "separate") => Promise<void> | void;
   onSetResidual?: (enabled: boolean) => Promise<void> | void;
@@ -101,7 +103,9 @@ export default function VideoEditor({
   const [timelineRows, setTimelineRows] = useState<TimelineRow[]>(state.timeline_rows);
   const [baseAsset, setBaseAsset] = useState<VideoAsset | null>(null);
   const [draftAsset, setDraftAsset] = useState<VideoAsset | null>(null);
-  const [hasTimelineEdits, setHasTimelineEdits] = useState(false);
+  // Span edits not sent to the server yet, per event; the timeline rows already show them.
+  const [pendingSpans, setPendingSpans] = useState<PendingSpans>({});
+  const hasTimelineEdits = Object.keys(pendingSpans).length > 0;
   const [reloadKey, setReloadKey] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
@@ -179,22 +183,24 @@ export default function VideoEditor({
     [fps, maxFrame],
   );
 
-  // Edits that start while the asset is downloading must not be overwritten when it arrives.
-  const hasTimelineEditsRef = useRef(false);
-  hasTimelineEditsRef.current = hasTimelineEdits;
+  const pendingSpansRef = useRef(pendingSpans);
+  pendingSpansRef.current = pendingSpans;
 
   // Keyed on the store version only: the same version arrives again with a new rows array after every action
   // (the action's own refresh plus the SSE one). asset_version is too coarse, since track status and added
   // tracks change the asset without bumping it.
+  // Span edits only live in the rows and the pending map, so the reload may replace the asset; the pending
+  // edits of tracks that were not regenerated are put back on top of the server rows.
   useEffect(() => {
-    if (hasTimelineEdits) {
-      return;
+    const next = reapplyPending(state.timeline_rows, pendingSpansRef.current);
+    setTimelineRows(next.rows);
+    if (next.pending !== pendingSpansRef.current) {
+      setPendingSpans(next.pending);
     }
-    setTimelineRows(state.timeline_rows);
     let alive = true;
     void fetchAssetForExport()
       .then((asset) => {
-        if (!alive || hasTimelineEditsRef.current) {
+        if (!alive) {
           return;
         }
         setBaseAsset(asset);
@@ -212,8 +218,7 @@ export default function VideoEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.version, reloadKey]);
 
-  // A new run clears the asset (and a new video replaces it): drop everything tied to the old project,
-  // or a stale "unsaved edits" flag would freeze the refresh above.
+  // A new run clears the asset (and a new video replaces it): drop everything tied to the old project.
   const videoId = video?.video_id;
   useEffect(() => {
     stopPreviewAudio(true);
@@ -226,11 +231,7 @@ export default function VideoEditor({
     setTimelineRows(state.timeline_rows);
     setBaseAsset(null);
     setDraftAsset(null);
-    setHasTimelineEdits(false);
-    if (hasTimelineEditsRef.current) {
-      // The refresh above skipped this version because of the stale edits flag; load it now.
-      setReloadKey((key) => key + 1);
-    }
+    setPendingSpans({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId]);
 
@@ -464,7 +465,12 @@ export default function VideoEditor({
     description: string,
     spokenText: string | null,
   ) {
-    if (!onRegenerateEventAudio || regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)) {
+    const eventTrackId = timelineRows.find((row) => row.sound_event_id === soundEventId)?.sound_track_id ?? "";
+    if (
+      !onRegenerateEventAudio ||
+      regenerateBlockedReason(false, state.status, state.stage) ||
+      trackEventSpans(timelineRows, pendingSpans, eventTrackId).length > 0
+    ) {
       return;
     }
     setPanelError(null);
@@ -475,7 +481,6 @@ export default function VideoEditor({
       return;
     }
     submitEditSoundEventDetails(soundEventId, description, spokenText);
-    setHasTimelineEdits(false);
   }
 
   // Solo only counts while that track still has audio.
@@ -551,7 +556,7 @@ export default function VideoEditor({
           };
         }),
       );
-      setHasTimelineEdits(true);
+      setPendingSpans((pending) => ({ ...pending, [soundEventId]: { start_frame: nextStart, end_frame: nextEnd } }));
     },
     [maxFrame, timelineFrameCount],
   );
@@ -559,7 +564,7 @@ export default function VideoEditor({
   function resetTimestampEdits() {
     setTimelineRows(state.timeline_rows);
     setDraftAsset(baseAsset ? cloneAsset(baseAsset) : null);
-    setHasTimelineEdits(false);
+    setPendingSpans({});
   }
 
   function submitEditSoundEventDetails(
@@ -602,7 +607,6 @@ export default function VideoEditor({
           : item,
       ),
     );
-    setHasTimelineEdits(true);
     return true;
   }
 
@@ -655,7 +659,7 @@ export default function VideoEditor({
     }
     // The server timeline replaces the draft: drop the edits and reload it. Without edits the refresh
     // after the mode change has already loaded it.
-    setHasTimelineEdits(false);
+    setPendingSpans({});
     if (hadEdits) {
       setReloadKey((key) => key + 1);
     }
@@ -677,7 +681,7 @@ export default function VideoEditor({
       setBaseAsset(cloneAsset(committedAsset));
       setDraftAsset(cloneAsset(committedAsset));
     }
-    setHasTimelineEdits(false);
+    setPendingSpans({});
   }
 
   function exportEditedAsset() {
@@ -685,7 +689,7 @@ export default function VideoEditor({
       return;
     }
     downloadJson(applyTimelineEdits(draftAsset, timelineRows), "video-asset-edited.json");
-    setHasTimelineEdits(false);
+    setPendingSpans({});
   }
 
   async function cleanWorkspace() {
@@ -707,10 +711,22 @@ export default function VideoEditor({
     setTimelineRows([]);
     setBaseAsset(null);
     setDraftAsset(null);
-    setHasTimelineEdits(false);
+    setPendingSpans({});
   }
 
+  // Span edits block only what changes the audio of the whole timeline (clips); per-track actions and
+  // adding or deleting a track wait only for a running job.
   const editBlockedReason = regenerateBlockedReason(hasTimelineEdits, state.status, state.stage);
+  const trackBlockedReason = regenerateBlockedReason(false, state.status, state.stage);
+
+  // The selected track's edited spans go with its regenerate; the other tracks' edits stay pending.
+  async function regenerateSelectedTrack(trackId: string, method: "separate" | "generate", description: string | null) {
+    const events = trackEventSpans(timelineRows, pendingSpans, trackId);
+    await onRegenerateTrack?.(trackId, method, description, events);
+    if (events.length > 0) {
+      setPendingSpans((pending) => withoutEvents(pending, events));
+    }
+  }
 
   async function createTrack(track: NewTrack) {
     const id = await onCreateTrack?.(track);
@@ -793,6 +809,7 @@ export default function VideoEditor({
           trackColors={trackColors}
           objectLanes={objects.lanes}
           editBlockedReason={editBlockedReason}
+          trackBlockedReason={trackBlockedReason}
           onEditClip={commitClip}
           onAddTrack={onCreateTrack && draftAsset?.sound_timeline ? () => setAddTrackOpen(true) : undefined}
         />
@@ -804,16 +821,17 @@ export default function VideoEditor({
             artifact={audioTrackArtifacts.find((a) => a.sound_track_id === selectedTrack.sound_track_id)}
             status={baseAsset?.track_status?.[selectedTrack.sound_track_id]}
             appRunning={state.status === "running"}
-            blockedReason={regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)}
+            blockedReason={trackBlockedReason}
             hasAudio={baseAsset?.has_audio ?? false}
             sourceType={soundSources?.find((source) => source.sound_source_id === selectedTrack.sound_source_id)?.source_type}
             residualEnabled={baseAsset?.residual_enabled ?? false}
             objectColor={highlightColor}
             error={panelError}
+            pendingSpans={trackEventSpans(timelineRows, pendingSpans, selectedTrack.sound_track_id).length > 0}
             hasUnsavedEdits={hasTimelineEdits}
             onDiscardEdits={resetTimestampEdits}
             onRegenerate={(method, description) =>
-              runPanelAction(() => onRegenerateTrack?.(selectedTrack.sound_track_id, method, description))
+              runPanelAction(() => regenerateSelectedTrack(selectedTrack.sound_track_id, method, description))
             }
             onSetResidual={(enabled) => runPanelAction(() => onSetResidual?.(enabled))}
             onDeleteTrack={

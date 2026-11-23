@@ -18,6 +18,7 @@ import {
   type NewTrack,
 } from "./api";
 import type { Clip } from "./lib/clip";
+import type { EventSpan } from "./lib/pendingEdits";
 import { failure } from "./lib/errors";
 import type { VideoAsset } from "./types";
 import VideoEditor from "./components/VideoEditor";
@@ -161,10 +162,11 @@ export default function App() {
     trackId: string,
     method: "separate" | "generate",
     description: string | null,
+    events?: EventSpan[],
   ) {
     setSubmitError(null);
     try {
-      await regenerateTrackAudio(trackId, method, description ?? undefined);
+      await regenerateTrackAudio(trackId, method, description ?? undefined, undefined, events);
       await refreshAssetSummary();
     } catch (error) {
       // Top line: short summary. The full message goes next to the failed control.

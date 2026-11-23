@@ -45,7 +45,7 @@ export default function AddTrackDialog({ open, onClose, hasAudio, frame, frameCo
         description: description.trim(),
         model,
         ...(speech ? { spoken_text: spoken.trim() } : {}),
-        ...newTrackSpan(model, frame, frameCount, fps),
+        spans: [newTrackSpan(model, frame, frameCount, fps)],
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

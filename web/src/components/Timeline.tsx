@@ -34,6 +34,8 @@ interface TimelineProps {
   objectLanes?: ObjectLane[];
   // Why timeline edits that change the audio (clips, new tracks) are unavailable right now, if they are.
   editBlockedReason?: string | null;
+  // Why adding a track is unavailable right now (a running job), if it is.
+  trackBlockedReason?: string | null;
   // Commits one finished clip drag; the timeline keeps showing the dragged clip until it settles.
   onEditClip?: (soundTrackId: string, clip: Clip) => Promise<void> | void;
   onAddTrack?: () => void;
@@ -92,6 +94,7 @@ export default function Timeline({
   trackColors = {},
   objectLanes = [],
   editBlockedReason = null,
+  trackBlockedReason = null,
   onEditClip,
   onAddTrack,
 }: TimelineProps) {
@@ -491,9 +494,9 @@ export default function Timeline({
         <div className="tl-add">
           <button
             className="btn sm"
-            disabled={editBlockedReason !== null}
+            disabled={trackBlockedReason !== null}
             onClick={onAddTrack}
-            title={editBlockedReason ?? undefined}
+            title={trackBlockedReason ?? undefined}
             type="button"
           >
             Add track

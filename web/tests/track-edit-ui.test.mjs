@@ -55,9 +55,13 @@ test("timeline edit mode, add track and delete track controls", async (context) 
   assert.match(html, /<button[^>]*>Add track<\/button>/);
 
   // Blocked: "Edit audio" and "Add track" are disabled with the reason as tooltip.
-  html = timeline({ editBlockedReason: "Generation is running.", onAddTrack() {} });
+  html = timeline({ editBlockedReason: "Generation is running.", trackBlockedReason: "Generation is running.", onAddTrack() {} });
   assert.match(html, /disabled=""[^>]*title="Generation is running\."[^>]*>Edit audio/);
   assert.match(html, /disabled=""[^>]*title="Generation is running\."[^>]*>Add track/);
+  // Pending span edits block Edit audio but not Add track.
+  html = timeline({ editBlockedReason: "Unsaved timeline edits.", onAddTrack() {} });
+  assert.match(html, /disabled=""[^>]*title="Unsaved timeline edits\."[^>]*>Edit audio/);
+  assert.match(html, /<button class="btn sm" type="button">Add track/);
   assert.ok(!timeline().includes(">Add track<"), "no Add track without a handler");
 
   // Delete track: only with a handler, disabled while blocked.

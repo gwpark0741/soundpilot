@@ -18,7 +18,9 @@ interface SelectedTrackPanelProps {
   objectColor: string;
   // Failure of the last action started from this panel, shown next to the controls.
   error?: string | null;
-  // Unsaved timeline edits can be dropped from here, since they are what blocks Regenerate.
+  // Span edits of this track wait for its regenerate; the event-level Regenerate is off until then.
+  pendingSpans?: boolean;
+  // Any unsaved timeline edit (this track's or another's) can be dropped from here.
   hasUnsavedEdits?: boolean;
   onDiscardEdits?: () => void;
   onRegenerate: (method: "separate" | "generate", description: string | null) => void;
@@ -30,6 +32,7 @@ interface SelectedTrackPanelProps {
 }
 
 const STATUS_CLASS = { ok: "done", run: "run", wait: "queue", err: "fail" } as const;
+const PENDING_SPANS_REASON = "Span edits are pending. Regenerate the track to apply them.";
 const ACTION_LABEL: Record<TrackAction, string> = {
   "re-separate": "Re-separate",
   "generate-instead": "Generate instead",
@@ -88,6 +91,7 @@ export default function SelectedTrackPanel({
   residualEnabled,
   objectColor,
   error = null,
+  pendingSpans = false,
   hasUnsavedEdits = false,
   onDiscardEdits,
   onRegenerate,
@@ -108,9 +112,10 @@ export default function SelectedTrackPanel({
       ? artifact?.attempt != null ? `Attempt ${artifact.attempt}` : null
       : artifact?.seed != null ? `Seed ${artifact.seed}` : null;
   const whyId = `${uid}-why`;
-  const blocked = blockedReason !== null;
   // t2a/tts tracks generate one clip per event from the event's own description, so only those are editable.
   const eventLevel = track.generation_model !== "separate" && track.generation_model !== "selsync";
+  const blocked = blockedReason !== null;
+  const reason = blockedReason ?? (eventLevel && pendingSpans ? PENDING_SPANS_REASON : null);
   const actionButtons = (
     <div className="actions">
       {actions.map((action) => (
@@ -124,7 +129,9 @@ export default function SelectedTrackPanel({
             onRegenerate(actionMethod(action), eventLevel || description === original ? null : description)
           }
         >
-          {ACTION_LABEL[action]}
+          {pendingSpans && (action === "regenerate" || (action === "re-separate" && track.generation_model === "separate"))
+            ? "Regenerate with new spans"
+            : ACTION_LABEL[action]}
         </button>
       ))}
       {track.generation_model === "separate" ? (
@@ -173,7 +180,7 @@ export default function SelectedTrackPanel({
                 <EventRow
                   key={event.sound_event_id}
                   event={event}
-                  disabled={blocked}
+                  disabled={reason !== null}
                   describedBy={whyId}
                   onRegenerate={onRegenerateEvent}
                 />
@@ -195,10 +202,10 @@ export default function SelectedTrackPanel({
             <div>{error}</div>
           </div>
         ) : null}
-        {blocked ? (
+        {reason ? (
           <p className="reason" id={whyId}>
             <Icon name="info" />
-            {blockedReason}
+            {reason}
           </p>
         ) : null}
         {onDeleteTrack ? (
@@ -223,7 +230,7 @@ export default function SelectedTrackPanel({
             />
           </div>
         ) : null}
-        {blocked && hasUnsavedEdits && onDiscardEdits ? (
+        {hasUnsavedEdits && onDiscardEdits ? (
           <div className="actions">
             <button type="button" className="btn sm" onClick={onDiscardEdits}>
               Discard edits
