@@ -18,6 +18,13 @@ class ServerSettingsTest(unittest.TestCase):
 
         self.assertEqual(settings.hunyuan_model_path, Path("/tmp/v2a-model-cache"))
 
+    def test_hunyuan_enabled_env(self) -> None:
+        self.assertTrue(ServerSettings(_env_file=None).hunyuan_enabled)
+        with patch.dict(os.environ, {"V2A_SERVER_HUNYUAN_ENABLED": "false"}):
+            settings = ServerSettings(_env_file=None)
+
+        self.assertFalse(settings.hunyuan_enabled)
+
 
 if __name__ == "__main__":
     unittest.main()

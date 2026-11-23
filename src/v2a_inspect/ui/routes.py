@@ -1,33 +1,58 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from v2a_inspect.media_utils import probe_prepared_video
-from v2a_inspect.models import VideoAsset
+from v2a_inspect.audio_generation.routing import route_tracks
+from v2a_inspect.models import SoundTimeline, VideoAsset
 from v2a_inspect.preprocessing import prepare_video
+from v2a_inspect.preprocessing.video import extract_original_audio
 
+from .bundle import read_bundle, write_bundle
 from .overlays import render_tracking_overlay
 from .pipeline import (
     PipelineOptions,
     run_sound_timeline_pipeline,
     run_uploaded_video_pipeline,
     run_audio_generation_pipeline,
+    run_audio_mode_switch,
     run_event_audio_delete_pipeline,
     run_event_audio_regeneration_pipeline,
+    run_residual_toggle_pipeline,
+    run_separation_planning_pipeline,
+    run_track_clip_pipeline,
+    run_track_delete_pipeline,
+    run_track_regeneration_pipeline,
 )
-from .rows import current_frame_rows, timeline_rows, tracking_window_rows
+from .projects import (
+    list_projects,
+    load_project,
+    new_project_dir,
+    project_dir_of,
+    project_path,
+    write_meta,
+)
+from .rows import (
+    current_frame_rows,
+    timeline_rows,
+    track_highlight_fallbacks,
+    track_highlight_targets,
+    tracking_window_rows,
+)
 from .store import VideoAssetSnapshot, VideoAssetStore
+from .track_edit import NewTrackModel, add_track, set_clip, set_event_spans
 
 
 DEFAULT_WORK_DIR = os.getenv("V2A_INSPECT_UI_WORK_DIR")
@@ -38,8 +63,35 @@ DEFAULT_MAX_KEYFRAMES_PER_SCENE = int(
 )
 
 
+class ClipBody(BaseModel):
+    start: float
+    end: float
+    offset: float
+
+
+class SpanBody(BaseModel):
+    start_frame: int
+    end_frame: int
+
+
+class NewTrackBody(BaseModel):
+    label: str
+    description: str
+    model: NewTrackModel
+    spoken_text: str | None = None
+    spans: list[SpanBody]
+
+
+class EventSpanBody(BaseModel):
+    sound_event_id: uuid.UUID
+    start_frame: int
+    end_frame: int
+
+
 def create_router(store: VideoAssetStore) -> APIRouter:
     router = APIRouter()
+    # Project the last /api/runs started; only used to label a directory without asset.json as running.
+    run_project_id: str | None = None
 
     @router.get("/api/asset")
     async def get_asset() -> dict[str, object]:
@@ -122,7 +174,9 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         )
         if artifact is None:
             raise HTTPException(status_code=404, detail="No track audio available")
-        return _audio_file_response(artifact.path, "No track audio file available")
+        return _audio_file_response(
+            artifact.playback_path, "No track audio file available"
+        )
 
     @router.get("/api/audio/events/{sound_event_id}")
     async def get_audio_event(sound_event_id: str) -> FileResponse:
@@ -151,6 +205,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             raise HTTPException(status_code=409, detail="Pipeline is running")
         if snapshot.asset is None:
             raise HTTPException(status_code=404, detail="No video asset loaded")
+        _reject_track_level_event(snapshot.asset, sound_event_id)
         background_tasks.add_task(
             run_event_audio_delete_pipeline, snapshot.asset, store, sound_event_id
         )
@@ -172,6 +227,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             raise HTTPException(status_code=409, detail="Pipeline is running")
         if snapshot.asset is None:
             raise HTTPException(status_code=404, detail="No video asset loaded")
+        _reject_track_level_event(snapshot.asset, sound_event_id)
         background_tasks.add_task(
             run_event_audio_regeneration_pipeline,
             snapshot.asset,
@@ -183,6 +239,202 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         )
         await store.publish_asset_mutation(
             snapshot.asset, stage="queued event audio regeneration"
+        )
+        return {"status": "queued"}
+
+    @router.post("/api/audio/tracks/{sound_track_id}/regenerate")
+    async def regenerate_audio_track(
+        sound_track_id: str,
+        background_tasks: BackgroundTasks,
+        method: Annotated[Literal["separate", "generate", "selsync"], Form()],
+        description: Annotated[str | None, Form()] = None,
+        seed: Annotated[int | None, Form()] = None,
+        events: Annotated[
+            str | None, Form()
+        ] = None,  # JSON [{sound_event_id, start_frame, end_frame}]
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        tracks = asset.sound_timeline.sound_tracks if asset.sound_timeline else []
+        track = next(
+            (t for t in tracks if str(t.sound_track_id) == sound_track_id), None
+        )
+        if track is None:
+            raise HTTPException(status_code=404, detail="Sound track not found")
+        if events:
+            try:
+                edits = [EventSpanBody(**e) for e in json.loads(events)]
+                asset = set_event_spans(
+                    asset,
+                    track.sound_track_id,
+                    {e.sound_event_id: (e.start_frame, e.end_frame) for e in edits},
+                )
+            except (ValueError, TypeError) as exc:  # bad JSON, bad shape, or bad spans
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if method == "selsync":  # old name for "generate"
+            method = "generate"
+        if method == "separate" and not asset.has_audio:
+            raise HTTPException(
+                status_code=422,
+                detail="No original audio to separate.",
+            )
+        background_tasks.add_task(
+            run_track_regeneration_pipeline,
+            asset,
+            store,
+            sound_track_id,
+            method,
+            description,
+            seed,
+        )
+        await store.publish_asset_mutation(
+            asset, stage="queued track audio regeneration"
+        )
+        return {"status": "queued"}
+
+    @router.post("/api/audio/tracks/{sound_track_id}/clip")
+    async def set_audio_track_clip(
+        sound_track_id: str,
+        body: ClipBody,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        track_id = _track_uuid(sound_track_id)
+        try:
+            updated = set_clip(asset, track_id, body.start, body.end, body.offset)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        assert updated.sound_timeline is not None  # set_clip needs one
+        track = next(
+            t
+            for t in updated.sound_timeline.sound_tracks
+            if t.sound_track_id == track_id
+        )
+        background_tasks.add_task(run_track_clip_pipeline, updated, store)
+        await store.publish_asset_mutation(updated, stage="queued track audio edit")
+        return {
+            "status": "queued",
+            "clip": {
+                "start": track.clip_start_sec,
+                "end": track.clip_end_sec,
+                "offset": track.clip_offset_sec,
+            },
+        }
+
+    @router.delete("/api/audio/tracks/{sound_track_id}")
+    async def delete_audio_track(
+        sound_track_id: str,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        _track_uuid(sound_track_id)
+        tracks = asset.sound_timeline.sound_tracks if asset.sound_timeline else []
+        if not any(str(t.sound_track_id) == sound_track_id for t in tracks):
+            raise HTTPException(status_code=404, detail="Sound track not found")
+        background_tasks.add_task(
+            run_track_delete_pipeline, asset, store, sound_track_id
+        )
+        await store.publish_asset_mutation(asset, stage="queued track delete")
+        return {"status": "queued"}
+
+    @router.post("/api/audio/tracks")
+    async def create_audio_track(body: NewTrackBody) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None or asset.sound_timeline is None:
+            raise HTTPException(status_code=404, detail="No sound timeline loaded")
+        if body.model == "separate" and not asset.has_audio:
+            raise HTTPException(
+                status_code=422, detail="No original audio to separate."
+            )
+        try:
+            updated, track = add_track(
+                asset,
+                label=body.label,
+                description=body.description,
+                model=body.model,
+                spoken_text=body.spoken_text,
+                spans=[(s.start_frame, s.end_frame) for s in body.spans],
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Audio is generated next through the per-track regenerate call.
+        await store.publish_asset_mutation(updated, stage="added track")
+        await store.set_complete(stage="Added track.")
+        return {"status": "ok", "sound_track_id": str(track.sound_track_id)}
+
+    @router.post("/api/audio/mode")
+    async def set_audio_mode(
+        mode: Annotated[Literal["generate", "separate"], Form()],
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        try:  # validation only
+            route_tracks(
+                asset.sound_timeline or SoundTimeline(),
+                mode=mode,
+                has_audio=asset.has_audio,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if mode == asset.audio_mode:
+            await store.publish_asset_mutation(asset, stage="changing audio mode")
+            await store.set_complete(stage=f"Audio mode: {mode.capitalize()}")
+            return {"status": "ok"}
+        if mode == "separate" and asset.inactive_timeline is None:
+            # No separation timeline yet: plan it from the audio; the mode changes when it is ready.
+            await store.set_running(stage="planning separation")
+            background_tasks.add_task(run_separation_planning_pipeline, asset, store)
+            return {"status": "queued"}
+        # The preview video changed with the mode, so the media reloads (asset_version bump).
+        await run_audio_mode_switch(asset, store, mode)
+        return {"status": "ok"}
+
+    @router.post("/api/audio/residual")
+    async def set_residual_enabled(
+        background_tasks: BackgroundTasks,
+        enabled: Annotated[bool, Form()],
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        if snapshot.asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        if enabled and not (
+            snapshot.asset.has_audio and snapshot.asset.original_audio_path
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="원본 오디오가 없어 잔여 소리를 켤 수 없습니다.",
+            )
+        background_tasks.add_task(
+            run_residual_toggle_pipeline, snapshot.asset, store, enabled
+        )
+        await store.publish_asset_mutation(
+            snapshot.asset, stage="queued residual update"
         )
         return {"status": "queued"}
 
@@ -267,8 +519,12 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         if not video.filename:
             raise HTTPException(status_code=400, detail="No video filename provided")
 
-        root_dir = _root_dir(work_dir)
-        upload_path = _write_upload(root_dir, video.filename, await video.read())
+        nonlocal run_project_id
+        # Each run gets its own project directory so derived files never overwrite another project's.
+        project_dir = new_project_dir(_root_dir(work_dir))
+        write_meta(project_dir, video.filename)
+        upload_path = _write_upload(project_dir, video.filename, await video.read())
+        run_project_id = project_dir.name
 
         options = PipelineOptions(
             scene_threshold=scene_threshold,
@@ -278,10 +534,12 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         background_tasks.add_task(
             run_uploaded_video_pipeline,
             upload_path,
-            root_dir,
+            project_dir,
             store,
             options,
         )
+        # Drop the previous project from the UI right away (it stays in the project history).
+        await store.clear()
         await store.set_running(stage="queued")
         return {"status": "queued"}
 
@@ -333,14 +591,101 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         sam3_tracking_path = resolved_video_asset.sam3_tracking_path
         if sam3_tracking_path is not None and not sam3_tracking_path.exists():
             sam3_tracking_path = None
-        imported_asset = imported_asset.model_copy(
-            update={
-                "source_path": resolved_video_asset.source_path,
-                "sam3_tracking_path": sam3_tracking_path,
-            }
-        )
+        update: dict[str, object] = {
+            "source_path": resolved_video_asset.source_path,
+            "sam3_tracking_path": sam3_tracking_path,
+        }
+        # The JSON's audio fields win when its files exist; the upload may be the
+        # prepared (audio-stripped, letterboxed) video.
+        raw_video_path = imported_asset.raw_video_path
+        if raw_video_path is None or not raw_video_path.exists():
+            update["raw_video_path"] = resolved_video_asset.raw_video_path
+        original_audio_path = imported_asset.original_audio_path
+        if original_audio_path is None or not original_audio_path.exists():
+            update["original_audio_path"] = resolved_video_asset.original_audio_path
+            update["has_audio"] = resolved_video_asset.has_audio
+        imported_asset = imported_asset.model_copy(update=update)
         await store.set_complete_asset(imported_asset, stage="imported asset")
         return {"status": "imported"}
+
+    @router.get("/api/bundle")
+    async def export_bundle() -> Response:
+        snapshot = await store.snapshot()
+        root = None if snapshot.asset is None else _asset_work_root(snapshot.asset)
+        if snapshot.asset is None or root is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        buffer = io.BytesIO()
+        await asyncio.to_thread(write_bundle, snapshot.asset, root, buffer)
+        name = f"{snapshot.asset.source_path.stem}-bundle.zip"
+        return Response(
+            buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
+    @router.post("/api/bundle/import")
+    async def import_bundle(
+        bundle: Annotated[UploadFile, File()],
+        work_dir: Annotated[str | None, Form()] = None,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is already running")
+        nonlocal run_project_id
+        project_dir = new_project_dir(_root_dir(work_dir))
+        try:
+            imported_asset = await asyncio.to_thread(
+                read_bundle, bundle.file, project_dir
+            )
+        except ValueError as exc:
+            shutil.rmtree(project_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        name = Path(bundle.filename or "").stem.removesuffix("-bundle")
+        write_meta(project_dir, name or imported_asset.source_path.stem)
+        run_project_id = None
+        await store.set_complete_asset(imported_asset, stage="imported bundle")
+        return {"status": "imported"}
+
+    # ponytail: the project history lives under the default work dir; the per-request work_dir override is not listed.
+    @router.get("/api/projects")
+    async def get_projects() -> list[dict[str, object]]:
+        snapshot = await store.snapshot()
+        running_id = run_project_id if snapshot.status == "running" else None
+        return await asyncio.to_thread(list_projects, _root_dir(None), running_id)
+
+    @router.post("/api/projects/{project_id}/open")
+    async def open_project(project_id: str) -> dict[str, object]:
+        nonlocal run_project_id
+        path = _existing_project(project_id)
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        try:
+            asset = await asyncio.to_thread(load_project, path)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if project_dir_of(asset) != path.resolve():
+            raise HTTPException(
+                status_code=409, detail="Project files were moved; reopen from a bundle"
+            )
+        run_project_id = None
+        await store.set_complete_asset(asset, stage="opened project")
+        return {"status": "opened"}
+
+    @router.delete("/api/projects/{project_id}")
+    async def delete_project(project_id: str) -> dict[str, object]:
+        path = _existing_project(project_id)
+        snapshot = await store.snapshot()
+        current = (
+            snapshot.asset is not None
+            and project_dir_of(snapshot.asset) == path.resolve()
+        )
+        if snapshot.status == "running" and (current or run_project_id == project_id):
+            raise HTTPException(status_code=409, detail="Project is running")
+        if current:
+            await store.clear()
+        await asyncio.to_thread(shutil.rmtree, path)
+        return {"status": "deleted"}
 
     @router.post("/api/sound-timeline/reset-run")
     async def reset_sound_timeline(
@@ -357,6 +702,10 @@ def create_router(store: VideoAssetStore) -> APIRouter:
                 "synthesized_video_path": None,
                 "sound_event_audio_artifacts": [],
                 "sound_track_audio_artifacts": [],
+                "separated_stem_paths": {},
+                "residual_path": None,
+                "residual_enabled": False,
+                "track_status": {},
             }
         )
         await store.publish_asset_mutation(
@@ -420,11 +769,55 @@ def create_router(store: VideoAssetStore) -> APIRouter:
     return router
 
 
+def _track_uuid(sound_track_id: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(sound_track_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Sound track not found") from exc
+
+
+def _reject_track_level_event(asset: VideoAsset, sound_event_id: str) -> None:
+    timeline = asset.sound_timeline
+    if timeline is None:
+        return
+    event = next(
+        (e for e in timeline.sound_events if str(e.sound_event_id) == sound_event_id),
+        None,
+    )
+    track = (
+        None
+        if event is None
+        else next(
+            (
+                t
+                for t in timeline.sound_tracks
+                if t.sound_track_id == event.sound_track_id
+            ),
+            None,
+        )
+    )
+    if track is not None and track.generation_model in ("separate", "selsync"):
+        raise HTTPException(
+            status_code=409,
+            detail="분리/SelSync 트랙의 이벤트는 개별로 재생성할 수 없습니다. 트랙 재생성을 쓰세요.",
+        )
+
+
 def _root_dir(work_dir: str | None) -> Path:
     root_dir = Path(work_dir or DEFAULT_WORK_DIR or tempfile.gettempdir())
     if root_dir.name != "v2a-inspect-ui":
         root_dir /= "v2a-inspect-ui"
     return root_dir
+
+
+def _existing_project(project_id: str) -> Path:
+    try:
+        path = project_path(_root_dir(None), project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Project not found") from exc
+    if not path.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found")
+    return path
 
 
 def _write_upload(root_dir: Path, filename: str, data: bytes) -> Path:
@@ -440,9 +833,17 @@ async def _resolve_import_video(upload_path: Path, root_dir: Path) -> VideoAsset
         probe = probe_prepared_video(upload_path)
     except Exception:
         return await asyncio.to_thread(prepare_video, upload_path, root_dir)
+    original_audio_path = await asyncio.to_thread(
+        extract_original_audio,
+        upload_path,
+        root_dir / f"{upload_path.stem}.original.wav",
+    )
     return VideoAsset(
         source_path=probe.path,
         frame_count=probe.frame_count,
+        raw_video_path=upload_path,
+        original_audio_path=original_audio_path,
+        has_audio=original_audio_path is not None,
     )
 
 
@@ -469,15 +870,17 @@ def _summary_payload(snapshot: VideoAssetSnapshot) -> dict[str, object]:
         "audio_tracks": []
         if asset is None
         else [
-            item.model_dump(mode="json")
-            for item in asset.sound_track_audio_artifacts
+            item.model_dump(mode="json") for item in asset.sound_track_audio_artifacts
         ],
         "audio_events": []
         if asset is None
         else [
-            item.model_dump(mode="json")
-            for item in asset.sound_event_audio_artifacts
+            item.model_dump(mode="json") for item in asset.sound_event_audio_artifacts
         ],
+        "track_targets": {} if asset is None else track_highlight_targets(asset),
+        "track_target_fallbacks": {}
+        if asset is None
+        else track_highlight_fallbacks(asset),
     }
 
 
@@ -522,7 +925,7 @@ def _asset_work_root(asset: VideoAsset) -> Path | None:
     if root.name == "uploads":
         root = root.parent
     root = root.resolve()
-    if root.name != "v2a-inspect-ui":
+    if root.name != "v2a-inspect-ui" and root.parent.name != "projects":
         return None
     return root
 

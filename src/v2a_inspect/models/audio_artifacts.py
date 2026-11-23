@@ -24,3 +24,13 @@ class SoundTrackAudioArtifact(SchemaModel):
     duration_sec: float
     event_count: int = Field(ge=0)
     waveform_peaks: list[float] = Field(default_factory=list)
+    origin: Literal["mixed", "separated", "generated"] = "mixed"
+    seed: int | None = None
+    attempt: int | None = None
+    description: str | None = None
+    # Full-length WAV with the track's clip applied; what the preview and Play/Solo use.
+    clip_path: Path | None = None
+
+    @property
+    def playback_path(self) -> Path:
+        return self.clip_path or self.path

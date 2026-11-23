@@ -1,7 +1,10 @@
+import type { Clip } from "./lib/clip";
+import type { NewTrackModel } from "./lib/newTrack";
+import type { EventSpan, SpanEdit } from "./lib/pendingEdits";
 import type {
   AssetResponse,
-  CurrentFrameRows,
   FullAssetResponse,
+  ProjectSummary,
   TrackWindowResponse,
   VideoAsset,
 } from "./types";
@@ -33,18 +36,6 @@ export async function cleanAsset(): Promise<void> {
   }
 }
 
-export async function fetchCurrentFrame(
-  frame: number,
-  signal?: AbortSignal,
-): Promise<CurrentFrameRows | null> {
-  const response = await fetch(`/api/rows/current-frame?frame=${frame}`, { signal });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch frame rows: ${response.status}`);
-  }
-  const payload = await response.json();
-  return payload.rows;
-}
-
 export async function fetchTrackingWindow(
   startFrame: number,
   endFrame: number,
@@ -72,15 +63,38 @@ export async function startRun(form: HTMLFormElement): Promise<void> {
   }
 }
 
-export async function importAsset(form: HTMLFormElement): Promise<void> {
-  const formData = new FormData(form);
-  const response = await fetch("/api/asset/import", {
+export async function importBundle(form: HTMLFormElement): Promise<void> {
+  const response = await fetch("/api/bundle/import", {
     method: "POST",
-    body: formData,
+    body: new FormData(form),
   });
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || `Failed to import asset: ${response.status}`);
+    throw new Error(message || `Failed to import bundle: ${response.status}`);
+  }
+}
+
+export async function fetchProjects(): Promise<ProjectSummary[]> {
+  const response = await fetch("/api/projects");
+  if (!response.ok) {
+    throw new Error(`Failed to list projects: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function openProject(id: string): Promise<void> {
+  const response = await fetch(`/api/projects/${id}/open`, { method: "POST" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to open project: ${response.status}`);
+  }
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  const response = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to delete project: ${response.status}`);
   }
 }
 
@@ -94,8 +108,11 @@ export async function resetSoundTimeline(): Promise<void> {
   }
 }
 
-export async function generateAudio(form: HTMLFormElement, asset: VideoAsset | null): Promise<void> {
-  const formData = new FormData(form);
+export async function generateAudio(serverUrl: string, asset: VideoAsset | null): Promise<void> {
+  const formData = new FormData();
+  if (serverUrl.trim()) {
+    formData.append("server_url", serverUrl.trim());
+  }
   if (asset) {
     const assetBlob = new Blob([JSON.stringify(asset)], { type: "application/json" });
     formData.append("asset", assetBlob, "edited-asset.json");
@@ -107,16 +124,6 @@ export async function generateAudio(form: HTMLFormElement, asset: VideoAsset | n
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Failed to generate audio: ${response.status}`);
-  }
-}
-
-export async function deleteEventAudio(soundEventId: string): Promise<void> {
-  const response = await fetch(`/api/audio/events/${soundEventId}`, {
-    method: "DELETE",
-  });
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Failed to delete event audio: ${response.status}`);
   }
 }
 
@@ -144,3 +151,94 @@ export async function regenerateEventAudio(
   }
 }
 
+export async function regenerateTrackAudio(
+  trackId: string,
+  method: "separate" | "generate",
+  description?: string,
+  seed?: number,
+  events?: EventSpan[],
+): Promise<void> {
+  const formData = new FormData();
+  formData.append("method", method);
+  if (description) {
+    formData.append("description", description);
+  }
+  if (seed !== undefined) {
+    formData.append("seed", String(seed));
+  }
+  if (events?.length) {
+    formData.append("events", JSON.stringify(events));
+  }
+  const response = await fetch(`/api/audio/tracks/${trackId}/regenerate`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to regenerate track audio: ${response.status}`);
+  }
+}
+
+export async function setAudioMode(mode: "generate" | "separate"): Promise<void> {
+  const formData = new FormData();
+  formData.append("mode", mode);
+  const response = await fetch("/api/audio/mode", { method: "POST", body: formData });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to set audio mode: ${response.status}`);
+  }
+}
+
+export async function setResidualEnabled(enabled: boolean): Promise<void> {
+  const formData = new FormData();
+  formData.append("enabled", String(enabled));
+  const response = await fetch("/api/audio/residual", {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to update residual: ${response.status}`);
+  }
+}
+
+export async function setTrackClip(trackId: string, clip: Clip): Promise<void> {
+  const response = await fetch(`/api/audio/tracks/${trackId}/clip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(clip),
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to update track audio: ${response.status}`);
+  }
+}
+
+export async function deleteTrack(trackId: string): Promise<void> {
+  const response = await fetch(`/api/audio/tracks/${trackId}`, { method: "DELETE" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to delete track: ${response.status}`);
+  }
+}
+
+export interface NewTrack {
+  label: string;
+  description: string;
+  model: NewTrackModel;
+  spoken_text?: string;
+  spans: SpanEdit[];
+}
+
+export async function createTrack(track: NewTrack): Promise<string> {
+  const response = await fetch("/api/audio/tracks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(track),
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to add track: ${response.status}`);
+  }
+  return (await response.json()).sound_track_id;
+}

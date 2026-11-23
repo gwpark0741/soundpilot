@@ -1,14 +1,25 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   fetchAssetSummary,
   cleanAsset,
-  importAsset,
+  importBundle,
+  openProject,
+  deleteProject,
   resetSoundTimeline,
   startRun,
   generateAudio,
-  deleteEventAudio,
   regenerateEventAudio,
+  regenerateTrackAudio,
+  setAudioMode,
+  setResidualEnabled,
+  setTrackClip,
+  deleteTrack,
+  createTrack,
+  type NewTrack,
 } from "./api";
+import type { Clip } from "./lib/clip";
+import type { EventSpan } from "./lib/pendingEdits";
+import { failure } from "./lib/errors";
 import type { VideoAsset } from "./types";
 import VideoEditor from "./components/VideoEditor";
 import type { AssetResponse } from "./types";
@@ -24,11 +35,14 @@ const emptyAsset: AssetResponse = {
   timeline_rows: [],
   audio_tracks: [],
   audio_events: [],
+  track_targets: {},
+  track_target_fallbacks: {},
 };
 
 export default function App() {
   const [state, setState] = useState<AssetResponse>(emptyAsset);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const summaryRequestRef = useRef(0);
 
   useEffect(() => {
     void refreshAssetSummary();
@@ -40,8 +54,12 @@ export default function App() {
   }, []);
 
   async function refreshAssetSummary() {
+    const request = ++summaryRequestRef.current;
     const nextState = await fetchAssetSummary();
-    setState(nextState);
+    // A slower, older response must not replace a newer one.
+    if (request === summaryRequestRef.current) {
+      setState(nextState);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -51,7 +69,8 @@ export default function App() {
       await startRun(event.currentTarget);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not analyze the video.", error, "Check the video, then press Run again."));
+      throw error;
     }
   }
 
@@ -59,10 +78,33 @@ export default function App() {
     event.preventDefault();
     setSubmitError(null);
     try {
-      await importAsset(event.currentTarget);
+      await importBundle(event.currentTarget);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not load the project.", error, "Check the bundle, then press Load again."));
+      throw error;
+    }
+  }
+
+  async function handleOpenProject(id: string) {
+    setSubmitError(null);
+    try {
+      await openProject(id);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(failure("Could not open the project.", error, "Wait for the analysis to finish, then try again."));
+      throw error;
+    }
+  }
+
+  async function handleDeleteProject(id: string) {
+    setSubmitError(null);
+    try {
+      await deleteProject(id);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(failure("Could not delete the project.", error, "Try again in a moment."));
+      throw error;
     }
   }
 
@@ -72,7 +114,8 @@ export default function App() {
       await resetSoundTimeline();
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not reset the soundtrack.", error, "Try again in a moment."));
+      throw error;
     }
   }
 
@@ -82,30 +125,18 @@ export default function App() {
       await cleanAsset();
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not clean the workspace.", error, "Try again in a moment."));
       throw error;
     }
   }
 
-  async function handleGenerateAudio(event: FormEvent<HTMLFormElement>, draftAsset: VideoAsset | null) {
-    event.preventDefault();
+  async function handleGenerateAudio(serverUrl: string, draftAsset: VideoAsset | null) {
     setSubmitError(null);
     try {
-      await generateAudio(event.currentTarget, draftAsset);
+      await generateAudio(serverUrl, draftAsset);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function handleDeleteEventAudio(soundEventId: string) {
-    setSubmitError(null);
-    try {
-      await deleteEventAudio(soundEventId);
-      await refreshAssetSummary();
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      setSubmitError(failure("Could not generate audio.", error, "Check the inference server URL, then press Generate audio again."));
       throw error;
     }
   }
@@ -121,9 +152,92 @@ export default function App() {
       await regenerateEventAudio(soundEventId, description, spokenText, serverUrl);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      // Top line: short summary. The full message goes next to the failed control.
+      setSubmitError("Could not regenerate the event audio.");
+      throw new Error(failure("Could not regenerate the event audio.", error, "Press Regenerate to try again."));
+    }
+  }
+
+  async function handleRegenerateTrack(
+    trackId: string,
+    method: "separate" | "generate",
+    description: string | null,
+    events?: EventSpan[],
+  ) {
+    setSubmitError(null);
+    try {
+      await regenerateTrackAudio(trackId, method, description ?? undefined, undefined, events);
+      await refreshAssetSummary();
+    } catch (error) {
+      // Top line: short summary. The full message goes next to the failed control.
+      setSubmitError("Could not regenerate the track.");
+      throw new Error(failure("Could not regenerate the track.", error, "Press Regenerate to try again."));
+    }
+  }
+
+  async function handleSetAudioMode(mode: "generate" | "separate") {
+    setSubmitError(null);
+    try {
+      await setAudioMode(mode);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(failure("Could not change the audio method.", error, "Try again in a moment."));
       throw error;
     }
+  }
+
+  async function handleSetResidual(enabled: boolean) {
+    setSubmitError(null);
+    try {
+      await setResidualEnabled(enabled);
+      await refreshAssetSummary();
+    } catch (error) {
+      // Top line: short summary. The full message goes next to the failed control.
+      setSubmitError("Could not update the soundtrack mix.");
+      throw new Error(failure("Could not update the soundtrack mix.", error, "Try the switch again."));
+    }
+  }
+
+  async function handleSetTrackClip(trackId: string, clip: Clip) {
+    setSubmitError(null);
+    try {
+      await setTrackClip(trackId, clip);
+      await refreshAssetSummary();
+    } catch (error) {
+      // Top line: short summary. The full message goes next to the track.
+      setSubmitError("Could not update the track audio.");
+      throw new Error(failure("Could not update the track audio.", error, "Try the edit again."));
+    }
+  }
+
+  async function handleDeleteTrack(trackId: string) {
+    setSubmitError(null);
+    try {
+      await deleteTrack(trackId);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError("Could not delete the track.");
+      throw new Error(failure("Could not delete the track.", error, "Try again in a moment."));
+    }
+  }
+
+  async function handleCreateTrack(track: NewTrack): Promise<string> {
+    setSubmitError(null);
+    let id: string;
+    try {
+      id = await createTrack(track);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError("Could not add the track.");
+      throw new Error(failure("Could not add the track.", error, "Check the fields, then try again."));
+    }
+    // The track exists now; its audio follows through the per-track regenerate flow.
+    try {
+      await handleRegenerateTrack(id, track.model === "separate" ? "separate" : "generate", null);
+    } catch {
+      // The top line already says so, and the track can be regenerated from its panel.
+    }
+    return id;
   }
 
   return (
@@ -133,10 +247,17 @@ export default function App() {
       onSubmit={handleSubmit}
       onImport={handleImport}
       onClean={handleClean}
+      onOpenProject={handleOpenProject}
+      onDeleteProject={handleDeleteProject}
       onResetSoundTimeline={handleResetSoundTimeline}
       onGenerateAudio={handleGenerateAudio}
-      onDeleteEventAudio={handleDeleteEventAudio}
       onRegenerateEventAudio={handleRegenerateEventAudio}
+      onRegenerateTrack={handleRegenerateTrack}
+      onSetAudioMode={handleSetAudioMode}
+      onSetResidual={handleSetResidual}
+      onSetTrackClip={handleSetTrackClip}
+      onDeleteTrack={handleDeleteTrack}
+      onCreateTrack={handleCreateTrack}
     />
   );
 }

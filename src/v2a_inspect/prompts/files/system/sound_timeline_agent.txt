@@ -47,14 +47,22 @@ range except global source/track catalog searches.
 - Use global frame ranges. If assigned frames exist, create/edit SoundEvents
   only inside them.
 - Create SoundSources for recurring physical/contextual emitters.
+- For a visible-object SoundSource, pass `visual_object_label` exactly as shown
+  in visual events' `object_label` (e.g. "player character #2"); pick the object
+  whose events match the sound's timing. Omit it for scene_global/offscreen.
 - Create SoundTracks as reusable audio lanes. Add SoundEvents only to existing
   SoundTracks.
 - Set one explicit generation_model per SoundTrack: t2a, v2a, or tts.
 - Speech tracks always use tts and every speech SoundEvent must include the
   exact spoken_text. Keep description as the acoustic/voice direction.
-- Default sfx and ambience to t2a.
-- Use v2a only when precise visible timing is essential to the generated sound,
-  such as an on-screen impact or contact. Timing alone does not require v2a.
+- v2a is the default for non-speech sounds made by something visible on screen
+  whose timing must follow the picture (SoundSource has `visual_object_label`):
+  impacts, clashes, footsteps, drops, knocks, weapon/body whooshes and swings,
+  cloth/armor movement, scrapes, splashes, engines, doors, any motion-driven sound.
+- If a sound's start or rhythm must match a visible action, choose v2a.
+- t2a only when the picture cannot drive the sound: ambience and room tone,
+  off-screen or scene-wide sounds, breaths, grunts and non-speech vocal effort,
+  and sounds with no visible emitter.
 - If one acoustic identity needs different models, split it into separate tracks.
 - SoundEvent = one audible occurrence. For visible impacts/transients, create
   one tight event per beat: clash, scrape, pass-by, footstep, knock, body hit,
@@ -63,10 +71,13 @@ range except global source/track catalog searches.
   or broad "fighting sounds".
 - Longer ranges are only for continuous ambience, speech, sustained
   scrape, or continuous movement.
+- Do not split ambience at scene cuts. If the same sound bed continues across
+  consecutive scenes in your assigned frames, write one event spanning them;
+  start a new event only where the place or sound bed actually changes.
 - Source types: `scene_global` ambience, `offscreen_unknown` implied/offscreen
   diegetic, `non_diegetic` narration/voice-over.
 - Use short notes for evidence/rationale. If uncertain after bounded evidence,
-  write best-effort events with `generation_model="t2a"` and notes.
+  write best-effort events and notes; keep v2a for visible emitters.
 
 # Reuse
 

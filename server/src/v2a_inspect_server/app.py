@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import secrets
 import shutil
 import uuid
 import multiprocessing
@@ -11,7 +12,8 @@ if multiprocessing.get_start_method(allow_none=True) != "spawn":
     multiprocessing.set_start_method("spawn", force=True)
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, Request, UploadFile, HTTPException
+from fastapi.responses import JSONResponse
 from v2a_inspect_server.models import (
     Sam3SegmentImageRequest,
     Sam3TrackVideoRequest,
@@ -36,7 +38,8 @@ async def lifespan(app: FastAPI):
     global sam3_client, hunyuan_client, speech_client
     # Initialize the clients on startup
     sam3_client = Sam3InferenceClient()
-    hunyuan_client = HunyuanInferenceClient()
+    if settings.hunyuan_enabled:
+        hunyuan_client = HunyuanInferenceClient()
     speech_client = KokoroInferenceClient()
     yield
     # Cleanup on shutdown
@@ -50,6 +53,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="v2a-inspect-server", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def require_bearer_token(request: Request, call_next):
+    token = settings.api_token
+    if token and request.url.path != "/healthz":
+        sent = request.headers.get("authorization", "")
+        if not secrets.compare_digest(sent.encode(), f"Bearer {token}".encode()):
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 @app.get("/healthz")
@@ -105,6 +118,10 @@ async def segment_image_sam3(request: Sam3SegmentImageRequest):
 
 @app.post("/infer/hunyuan/generate-v2a")
 async def generate_v2a_hunyuan(request: HunyuanGenerateV2ARequest):
+    if not settings.hunyuan_enabled:
+        raise HTTPException(
+            status_code=503, detail="Hunyuan is disabled on this server"
+        )
     if hunyuan_client is None:
         raise HTTPException(status_code=503, detail="Hunyuan client not initialized")
     try:

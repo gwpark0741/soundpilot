@@ -12,6 +12,7 @@ class ServerSettings(BaseSettings):
         default=Path("/tmp/v2a_uploads"),
         validation_alias=AliasChoices("V2A_SERVER_UPLOAD_DIR", "V2A_UPLOAD_DIR"),
     )
+    api_token: str = ""
     host: str = "0.0.0.0"
     port: int = 8080
     sam31_max_num_objects: int = 48
@@ -24,6 +25,7 @@ class ServerSettings(BaseSettings):
     opencv_hw_device: int | None = None
     opencv_ffmpeg_capture_options: str | None = "hw_decoders_any;cuda"
     enable_nvenc: bool = True
+    hunyuan_enabled: bool = True
     hunyuan_model_id: str = "tencent/HunyuanVideo-Foley"
     hunyuan_model_path: Path = Path("HunyuanVideo-Foley")
     hunyuan_model_size: str = "xl"

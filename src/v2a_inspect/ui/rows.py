@@ -94,6 +94,7 @@ def track_rows(video_asset: VideoAsset) -> list[TableRow]:
                 {
                     "scene": scene_index,
                     "track": track_index,
+                    "scene_track_id": str(track.scene_track_id),
                     "label": _track_label(track),
                     "start_frame": track.start_frame_index,
                     "end_frame": track.end_frame_index,
@@ -229,6 +230,7 @@ def timeline_rows(video_asset: VideoAsset) -> list[TableRow]:
             {
                 "lane": "tracking",
                 "label": row["label"],
+                "scene_track_id": row["scene_track_id"],
                 "start_frame": row["start_frame"],
                 "end_frame": row["end_frame"],
                 "kind": "track",
@@ -288,6 +290,7 @@ def tracking_window_rows(
                     "frame_index": point.frame_index,
                     "bbox_xyxy": point.bbox_xyxy,
                     "confidence": round(point.confidence, 3),
+                    "mask_rle": point.mask.rle if point.mask else None,
                 }
                 for point in track.points
                 if start_frame <= point.frame_index <= end_frame
@@ -299,6 +302,7 @@ def tracking_window_rows(
                 {
                     "scene": scene_index,
                     "track": track_index,
+                    "scene_track_id": str(track.scene_track_id),
                     "label": _track_label(track),
                     "start_frame": track.start_frame_index,
                     "end_frame": track.end_frame_index,
@@ -402,3 +406,89 @@ def _frame_value(row: TableRow, key: str) -> int:
     if not isinstance(value, int):
         raise TypeError(f"{key} must be an int")
     return value
+
+
+def _norm(label: str | None) -> str:
+    return (label or "").strip().lower()
+
+
+def _overlaps(a0: int, a1: int, b0: int, b1: int) -> bool:
+    return a0 < b1 and b0 < a1  # end-exclusive
+
+
+def track_highlight(
+    video_asset: VideoAsset,
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Per sound track: (all highlight scene tracks, the head-noun fallback subset).
+
+    A: every visual object sharing the source object's label (labels drift
+    little within a scene but each scene has its own objects).
+    B: per sound event with no A presence overlapping it, scene tracks that
+    overlap the event and share the source label's last word.
+    """
+    timeline = video_asset.sound_timeline
+    if timeline is None:
+        return {}, {}
+    layer = video_asset.visual_identity_layer
+    objects = [] if layer is None else layer.visual_objects
+    sources: dict[UUID | None, SoundSource] = {
+        source.sound_source_id: source for source in timeline.sound_sources
+    }
+
+    def label_of(source: SoundSource) -> str:
+        if source.visual_object_id is not None:
+            obj = next(
+                (o for o in objects if o.visual_object_id == source.visual_object_id),
+                None,
+            )
+            return "" if obj is None else _norm(obj.label)
+        return _norm(source.label)
+
+    targets: dict[str, list[str]] = {}
+    fallbacks: dict[str, list[str]] = {}
+    for track in timeline.sound_tracks:
+        key = str(track.sound_track_id)
+        source = sources.get(track.sound_source_id)
+        label = "" if source is None else label_of(source)
+        own = None if source is None else source.visual_object_id
+        a_presences = [
+            p
+            for o in objects
+            if o.visual_object_id == own or (label and _norm(o.label) == label)
+            for p in o.presences
+            if p.scene_track_id is not None
+        ]
+        a_ids = [str(p.scene_track_id) for p in a_presences]
+        b_ids: list[str] = []
+        head = label.split()[-1] if label else ""
+        for event in timeline.sound_events:
+            if event.sound_track_id != track.sound_track_id or not head:
+                continue
+            e0, e1 = event.start_frame_index, event.end_frame_index
+            if any(
+                _overlaps(e0, e1, p.start_frame_index, p.end_frame_index)
+                for p in a_presences
+            ):
+                continue
+            b_ids += [
+                str(p.scene_track_id)
+                for o in objects
+                if _norm(o.label).split()[-1:] == [head]
+                for p in o.presences
+                if p.scene_track_id is not None
+                and _overlaps(e0, e1, p.start_frame_index, p.end_frame_index)
+            ]
+        a_set = set(a_ids)
+        targets[key] = list(dict.fromkeys(a_ids + b_ids))
+        fallbacks[key] = [i for i in dict.fromkeys(b_ids) if i not in a_set]
+    return targets, fallbacks
+
+
+def track_highlight_targets(video_asset: VideoAsset) -> dict[str, list[str]]:
+    """Map each sound track to the scene tracks its source points at."""
+    return track_highlight(video_asset)[0]
+
+
+def track_highlight_fallbacks(video_asset: VideoAsset) -> dict[str, list[str]]:
+    """Subset of the targets added by head-noun matching only."""
+    return track_highlight(video_asset)[1]

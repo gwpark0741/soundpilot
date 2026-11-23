@@ -1,0 +1,137 @@
+# Demo stack on one GPU: docker compose -f compose.demo.yaml --env-file .env.demo up -d
+x-gpu: &gpu
+  - driver: nvidia
+    device_ids: ["${V2A_GPU_DEVICE:?set V2A_GPU_DEVICE in .env.demo}"]
+
+x-hf-env: &hf-env
+  HF_HOME: /hf
+  HF_HUB_OFFLINE: "1"
+
+x-hf-volume: &hf-volume ${HF_CACHE:-/home/common/huggingface}:/hf:ro
+
+services:
+  inference:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      args:
+        APP_UID: ${V2A_DOCKER_UID:-1000}
+        APP_GID: ${V2A_DOCKER_GID:-1000}
+    image: v2a-inspect-server:demo
+    restart: unless-stopped
+    env_file:
+      - path: .env.demo
+        required: false
+    gpus: *gpu
+    environment:
+      <<: *hf-env
+      V2A_SERVER_HOST: 0.0.0.0
+      V2A_SERVER_PORT: 8080
+      V2A_SERVER_UPLOAD_DIR: /data/uploads
+      V2A_SERVER_HUNYUAN_ENABLED: "false"
+      V2A_SERVER_KOKORO_MODEL_ID: ${V2A_SERVER_KOKORO_MODEL_ID:-hexgrad/Kokoro-82M}
+      V2A_SERVER_KOKORO_LANGUAGE: ${V2A_SERVER_KOKORO_LANGUAGE:-a}
+      V2A_SERVER_KOKORO_VOICE: ${V2A_SERVER_KOKORO_VOICE:-af_heart}
+      V2A_SERVER_KOKORO_DEVICE: ${V2A_SERVER_KOKORO_DEVICE:-cpu}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,video}
+    volumes:
+      - *hf-volume
+      - v2a_server_data:/data  # /data (not /data/uploads) so the volume inherits appuser ownership
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz').read()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10m
+
+  tools:
+    image: audyssey-tools:demo-1117
+    restart: unless-stopped
+    env_file:
+      - path: .env.demo
+        required: false
+    gpus: *gpu
+    command:
+      [
+        "audyssey", "tool-server",
+        "--tool", "separation", "--tool", "generation",
+        "--impl", "real", "--host", "0.0.0.0", "--port", "8700",
+      ]
+    environment:
+      <<: *hf-env
+      AUDYSSEY_TOOL_TOKEN: ${AUDYSSEY_TOOL_TOKEN:?set AUDYSSEY_TOOL_TOKEN in .env.demo}
+      # Audyssey's separation reranking: 8 candidates, best by the CLAP + SAM Audio Judge ensemble
+      AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES: ${AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES:-8}
+    volumes:
+      - *hf-volume
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8700/health').read()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 5m
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: v2a-inspect:demo
+    restart: unless-stopped
+    env_file:
+      - path: .env.demo
+        required: false
+    gpus: *gpu
+    depends_on:
+      inference:
+        condition: service_started
+      tools:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${V2A_INSPECT_UI_PORT:-8501}:8501"
+    environment:
+      V2A_INSPECT_UI_HOST: 0.0.0.0
+      V2A_INSPECT_VIDEO_ENCODE_USE_NVENC: "false" # A100 has no NVENC; image default is true
+      V2A_INSPECT_UI_PORT: 8501
+      V2A_INSPECT_UI_WORK_DIR: /data/work
+      V2A_INSPECT_UI_STATIC_DIR: /app/web/dist
+      V2A_INSPECT_UI_SERVER_URL: http://inference:8080
+      V2A_INSPECT_CLIENT_SERVER_HOST: inference
+      V2A_INSPECT_CLIENT_SERVER_PORT: 8080
+      V2A_INSPECT_CLIENT_TIMEOUT: ${V2A_INSPECT_CLIENT_TIMEOUT:-300}
+      V2A_INSPECT_AUDYSSEY_TOOLS_URL: http://tools:8700
+      V2A_INSPECT_AUDYSSEY_TOOL_TOKEN: ${AUDYSSEY_TOOL_TOKEN}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY in .env.demo}
+      V2A_INSPECT_LLM_LARGE_MODEL: ${V2A_INSPECT_LLM_LARGE_MODEL:-gemini-4-hydrogen}
+      V2A_INSPECT_SELSYNC_SEED: ${V2A_INSPECT_SELSYNC_SEED:-42}
+      V2A_INSPECT_TRACK_DESCRIPTION_DEFAULT: ${V2A_INSPECT_TRACK_DESCRIPTION_DEFAULT:-label}
+      V2A_INSPECT_TTS_PROVIDER: ${V2A_INSPECT_TTS_PROVIDER:-kokoro} # ElevenLabs TTS returns 402 on the current plan
+    volumes:
+      - v2a_inspect_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/healthz').read()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  v2a_inspect_data:
+  v2a_server_data:

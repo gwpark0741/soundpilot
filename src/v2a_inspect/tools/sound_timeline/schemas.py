@@ -5,7 +5,12 @@ from uuid import UUID
 
 from pydantic import Field
 
-from v2a_inspect.models import SoundEvent, SoundSource, SoundTrack
+from v2a_inspect.models import (
+    SoundEvent,
+    SoundSource,
+    SoundTrack,
+    VisualIdentityLayer,
+)
 from v2a_inspect.models.base import SchemaModel
 
 
@@ -60,6 +65,7 @@ class UpsertSoundSourceArgs(SchemaModel):
     label: str = Field(min_length=1)
     sound_source_id: UUID | None = None
     visual_object_id: UUID | None = None
+    visual_object_label: str | None = None
     notes: str | None = None
 
 
@@ -375,6 +381,7 @@ class SoundSourceCatalogOutput(SchemaModel):
     returned_source_count: int
     sound_sources: list[SoundSource]
     query: str | None = None
+    visual_object_labels: dict[UUID, str] = Field(default_factory=dict)
 
     def to_tool_string(self) -> str:
         lines = [
@@ -389,7 +396,10 @@ class SoundSourceCatalogOutput(SchemaModel):
             visual = (
                 ""
                 if source.visual_object_id is None
-                else f" visual_object_id={source.visual_object_id}"
+                else " visual_object="
+                + self.visual_object_labels.get(
+                    source.visual_object_id, str(source.visual_object_id)
+                )
             )
             lines.append(
                 f"- id={source.sound_source_id} type={source.source_type}"
@@ -466,6 +476,40 @@ def disambiguate_labels(labels: list[str]) -> list[str]:
         seen[label] = seen.get(label, 0) + 1
         output.append(f"{label} #{seen[label]}" if labels.count(label) > 1 else label)
     return output
+
+
+def visual_object_labels(layer: VisualIdentityLayer | None) -> dict[UUID, str]:
+    """Object id -> the disambiguated label the read tools show the agent."""
+    if layer is None:
+        return {}
+    objects = layer.visual_objects
+    labels = disambiguate_labels([o.label or "unknown object" for o in objects])
+    return {o.visual_object_id: label for o, label in zip(objects, labels, strict=True)}
+
+
+def resolve_visual_object_id(
+    layer: VisualIdentityLayer | None,
+    visual_object_id: UUID | None,
+    visual_object_label: str | None,
+) -> UUID | None:
+    if visual_object_label is None:
+        return visual_object_id
+    labels = visual_object_labels(layer)
+    if not labels:
+        raise ValueError("No visual objects are available; omit visual_object_label.")
+    wanted = visual_object_label.strip().lower()
+    matches = [i for i, label in labels.items() if label.lower() == wanted]
+    if not matches:
+        raise ValueError(
+            f"Unknown visual_object_label {visual_object_label!r}. "
+            f"Valid labels: {', '.join(labels.values())}"
+        )
+    if visual_object_id is not None and visual_object_id != matches[0]:
+        raise ValueError(
+            "visual_object_id and visual_object_label disagree; "
+            "pass only visual_object_label."
+        )
+    return matches[0]
 
 
 def _compact_list(items: list[str]) -> str:

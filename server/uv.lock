@@ -1003,6 +1003,14 @@ wheels = [
 ]
 
 [[package]]
+name = "en-core-web-sm"
+version = "3.8.0"
+source = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+wheels = [
+    { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl", hash = "sha256:1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85" },
+]
+
+[[package]]
 name = "espeakng-loader"
 version = "0.2.4"
 source = { registry = "https://pypi.org/simple" }
@@ -4779,6 +4787,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "descript-audiotools" },
+    { name = "en-core-web-sm" },
     { name = "fastapi" },
     { name = "flash-attn", version = "2.6.3+cu128torch2.11", source = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.6.3+cu128torch2.11-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl" }, marker = "python_full_version < '3.12'" },
     { name = "flash-attn", version = "2.6.3+cu128torch2.11", source = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.6.3+cu128torch2.11-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl" }, marker = "python_full_version == '3.12.*'" },
@@ -4806,6 +4815,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "descript-audiotools", git = "https://github.com/descriptinc/audiotools" },
+    { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "fastapi", specifier = ">=0.136.1" },
     { name = "flash-attn", marker = "python_full_version == '3.10.*'", url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.6.3+cu128torch2.11-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl" },
     { name = "flash-attn", marker = "python_full_version == '3.11.*'", url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.6.3+cu128torch2.11-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl" },

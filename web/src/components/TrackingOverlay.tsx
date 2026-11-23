@@ -1,44 +1,68 @@
 import { useEffect, useMemo, useRef } from "react";
+import { rasterizeMasks } from "../lib/rle";
 import type { TrackWindowTrack, VideoSummary } from "../types";
 
 interface TrackingOverlayProps {
   video: VideoSummary;
   tracks: TrackWindowTrack[];
   frame: number;
-  enabled: boolean;
+  // null = no sound track selected: draw every tracked object in its own colour (sceneTrackColors).
+  highlightSceneTrackIds: string[] | null;
+  highlightColor: string;
+  sceneTrackColors: Record<string, string>;
 }
+
+type Point = TrackWindowTrack["points"][number] & { color: string };
 
 const SOURCE_WIDTH = 1280;
 const SOURCE_HEIGHT = 720;
+// Masks are rasterized at half the 1280x720 source size: enough for a smooth outline,
+// a quarter of the per-frame pixel work.
+const MASK_FILL_ALPHA = 0.4;
+const MASK_W = 640;
+const MASK_H = 360;
+
+// One offscreen canvas/ImageData reused for every frame (no per-frame allocation).
+let maskCanvas: HTMLCanvasElement | null = null;
+let maskImage: ImageData | null = null;
+let maskPixels: Uint32Array | null = null;
+let maskKey = "";
 
 export default function TrackingOverlay({
   video,
   tracks,
   frame,
-  enabled,
+  highlightSceneTrackIds,
+  highlightColor,
+  sceneTrackColors,
 }: TrackingOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pointIndex = useMemo(() => indexTrackPoints(tracks), [tracks]);
+  const pointIndex = useMemo(
+    () => indexTrackPoints(tracks, highlightSceneTrackIds, highlightColor, sceneTrackColors),
+    [tracks, highlightSceneTrackIds, highlightColor, sceneTrackColors],
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) {
-      return;
-    }
-
-    const context = canvas.getContext("2d");
-    if (!context) {
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) {
       return;
     }
 
     const rect = canvas.getBoundingClientRect();
     const ratio = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(rect.width * ratio));
-    canvas.height = Math.max(1, Math.round(rect.height * ratio));
+    // Assigning width/height reallocates the backing store, so only do it when the size changes.
+    const pxWidth = Math.max(1, Math.round(rect.width * ratio));
+    const pxHeight = Math.max(1, Math.round(rect.height * ratio));
+    if (canvas.width !== pxWidth || canvas.height !== pxHeight) {
+      canvas.width = pxWidth;
+      canvas.height = pxHeight;
+    }
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, rect.width, rect.height);
 
-    if (!enabled) {
+    const points = pointIndex.get(frame) ?? [];
+    if (points.length === 0) {
       return;
     }
 
@@ -47,83 +71,116 @@ export default function TrackingOverlay({
     const scale = Math.min(rect.width / sourceWidth, rect.height / sourceHeight);
     const offsetX = (rect.width - sourceWidth * scale) / 2;
     const offsetY = (rect.height - sourceHeight * scale) / 2;
-    const activePoints = pointIndex.get(frame) ?? [];
 
-    context.lineWidth = 2;
-    context.font = "12px Inter, system-ui, sans-serif";
-    context.textBaseline = "top";
-
-    activePoints.forEach(({ track, point }, index) => {
-      if (!point.bbox_xyxy) {
-        return;
-      }
-      const color = colorForIndex(index);
-      const [x1, y1, x2, y2] = point.bbox_xyxy;
-      const left = offsetX + x1 * scale;
-      const top = offsetY + y1 * scale;
-      const width = Math.max(1, (x2 - x1) * scale);
-      const height = Math.max(1, (y2 - y1) * scale);
-
-      context.strokeStyle = color;
-      context.strokeRect(left, top, width, height);
-      drawLabel(
-        context,
-        trackLabel(track, index),
-        point.confidence,
-        left,
-        Math.max(0, top - 18),
-        color,
+    const masks = points.flatMap((point) =>
+      point.mask_rle ? [{ rle: point.mask_rle, color: point.color }] : [],
+    );
+    if (masks.length > 0) {
+      context.drawImage(
+        paintMasks(masks),
+        offsetX,
+        offsetY,
+        sourceWidth * scale,
+        sourceHeight * scale,
       );
-    });
-  }, [enabled, frame, pointIndex, video.height, video.width]);
+    }
+
+    for (const point of points) {
+      if (!point.mask_rle && point.bbox_xyxy) {
+        const [x1, y1, x2, y2] = point.bbox_xyxy;
+        const left = offsetX + x1 * scale;
+        const top = offsetY + y1 * scale;
+        const width = Math.max(1, (x2 - x1) * scale);
+        const height = Math.max(1, (y2 - y1) * scale);
+        context.lineWidth = 4;
+        context.strokeStyle = "#000";
+        context.strokeRect(left, top, width, height);
+        context.lineWidth = 2;
+        context.strokeStyle = point.color;
+        context.strokeRect(left, top, width, height);
+      }
+    }
+  }, [frame, pointIndex, video.height, video.width]);
 
   return <canvas aria-hidden="true" className="tracking-overlay" ref={canvasRef} />;
 }
 
 function indexTrackPoints(
   tracks: TrackWindowTrack[],
-): Map<
-  number,
-  { track: TrackWindowTrack; point: TrackWindowTrack["points"][number] }[]
-> {
-  const index = new Map<
-    number,
-    { track: TrackWindowTrack; point: TrackWindowTrack["points"][number] }[]
-  >();
+  sceneTrackIds: string[] | null,
+  highlightColor: string,
+  sceneTrackColors: Record<string, string>,
+): Map<number, Point[]> {
+  const index = new Map<number, Point[]>();
   for (const track of tracks) {
+    if (sceneTrackIds && !sceneTrackIds.includes(track.scene_track_id)) {
+      continue;
+    }
+    const color = sceneTrackIds ? highlightColor : (sceneTrackColors[track.scene_track_id] ?? highlightColor);
     for (const point of track.points) {
       const framePoints = index.get(point.frame_index) ?? [];
-      framePoints.push({ track, point });
+      framePoints.push({ ...point, color });
       index.set(point.frame_index, framePoints);
     }
   }
   return index;
 }
 
-function trackLabel(track: TrackWindowTrack, index: number): string {
-  return track.label || `track ${index + 1}`;
-}
-
-function drawLabel(
-  context: CanvasRenderingContext2D,
-  label: string,
-  confidence: number,
-  x: number,
-  y: number,
-  color: string,
-) {
-  const text = `${label} ${confidence.toFixed(2)}`;
-  const metrics = context.measureText(text);
-  const width = metrics.width + 8;
-  const height = 16;
-
-  context.fillStyle = "rgba(5, 6, 9, 0.86)";
-  context.fillRect(x, y, width, height);
-  context.fillStyle = color;
-  context.fillText(text, x + 4, y + 2);
-}
-
-function colorForIndex(index: number): string {
-  const hue = (index * 137.508) % 360;
-  return `hsl(${hue} 72% 62%)`;
+// All masks of the frame in one image: translucent fill, 2px (=4 source px) colour edge,
+// and a dark halo ring just outside it. Pixels are written as packed little-endian ABGR.
+function paintMasks(masks: { rle: string; color: string }[]): HTMLCanvasElement {
+  if (!maskCanvas || !maskImage || !maskPixels) {
+    maskCanvas = document.createElement("canvas");
+    maskCanvas.width = MASK_W;
+    maskCanvas.height = MASK_H;
+    maskImage = new ImageData(MASK_W, MASK_H);
+    maskPixels = new Uint32Array(maskImage.data.buffer);
+  }
+  const key = masks.map((mask) => `${mask.color}${mask.rle}`).join("|");
+  if (key === maskKey) {
+    return maskCanvas;
+  }
+  // m holds 1 + the colour slot of the object covering each pixel (0 = none); later objects win overlaps.
+  const colors = [...new Set(masks.map((mask) => mask.color))];
+  const m = new Uint8Array(MASK_W * MASK_H);
+  colors.forEach((color, slot) => {
+    const covered = rasterizeMasks(
+      masks.filter((mask) => mask.color === color).map((mask) => mask.rle),
+      MASK_W,
+      MASK_H,
+    );
+    for (let i = 0; i < covered.length; i++) if (covered[i]) m[i] = slot + 1;
+  });
+  const packed = colors.map((color) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
+    return ((b << 16) | (g << 8) | r) >>> 0;
+  });
+  const FILLS = packed.map((rgb) => (rgb | (Math.round(255 * MASK_FILL_ALPHA) << 24)) >>> 0);
+  const EDGES = packed.map((rgb) => (rgb | (255 << 24)) >>> 0);
+  const HALO = (217 << 24) >>> 0; // black, alpha 0.85
+  const px = maskPixels;
+  const last = MASK_W * MASK_H;
+  for (let y = 0; y < MASK_H; y++) {
+    for (let x = 0; x < MASK_W; x++) {
+      const i = y * MASK_W + x;
+      const left = x > 0 ? m[i - 1] : 0;
+      const right = x < MASK_W - 1 ? m[i + 1] : 0;
+      const up = i >= MASK_W ? m[i - MASK_W] : 0;
+      const down = i + MASK_W < last ? m[i + MASK_W] : 0;
+      if (m[i]) {
+        // Edge is 2 mask px (= 4 source px, ~3 CSS px as in the mockup's 3px stroke).
+        px[i] =
+          left && right && up && down &&
+          (x > 1 ? m[i - 2] : 0) && (x < MASK_W - 2 ? m[i + 2] : 0) &&
+          (i >= 2 * MASK_W ? m[i - 2 * MASK_W] : 0) && (i + 2 * MASK_W < last ? m[i + 2 * MASK_W] : 0)
+            ? FILLS[m[i] - 1]
+            : EDGES[m[i] - 1];
+      } else {
+        px[i] = left | right | up | down ? HALO : 0;
+      }
+    }
+  }
+  maskCanvas.getContext("2d")?.putImageData(maskImage, 0, 0);
+  maskKey = key;
+  return maskCanvas;
 }

@@ -10,7 +10,7 @@ from typing_extensions import Self
 from .base import SchemaModel
 
 SoundTrackType = Literal["speech", "sfx", "ambience"]
-SoundGenerationModel = Literal["t2a", "v2a", "tts"]
+SoundGenerationModel = Literal["t2a", "v2a", "tts", "separate", "selsync"]
 SpokenText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
@@ -51,8 +51,23 @@ class SoundTrack(SchemaModel):
     canonical_key: str | None = None
     sound_source_id: UUID | None = None
     generation_model: SoundGenerationModel = "t2a"
+    agent_model: Literal["t2a", "v2a", "tts"] | None = None
+    description: str | None = None
+    # Non-destructive audio edit: play the stem's [clip_start_sec, clip_end_sec] (None = its
+    # start/end), shifted by clip_offset_sec on the video timeline. See audio_generation/clip.py.
+    clip_start_sec: float | None = None
+    clip_end_sec: float | None = None
+    clip_offset_sec: float = 0.0
 
     notes: str | None = None
+
+    @property
+    def has_clip(self) -> bool:
+        return (
+            self.clip_start_sec is not None
+            or self.clip_end_sec is not None
+            or self.clip_offset_sec != 0.0
+        )
 
     @model_validator(mode="before")
     @classmethod
@@ -66,7 +81,9 @@ class SoundTrack(SchemaModel):
         legacy_model = data.pop("generation_mode", None)
         generation_model = data.get("generation_model", legacy_model)
         if data.get("track_type") == "speech":
-            data["generation_model"] = "tts"
+            data["generation_model"] = (
+                "separate" if generation_model == "separate" else "tts"
+            )
         else:
             data["generation_model"] = {
                 None: "t2a",
@@ -81,6 +98,11 @@ class SoundTrack(SchemaModel):
     def check_generation_model(self) -> Self:
         if self.track_type != "speech" and self.generation_model == "tts":
             raise ValueError("Only speech tracks may use tts")
+        if self.track_type == "speech" and self.generation_model not in (
+            "tts",
+            "separate",
+        ):
+            raise ValueError("Speech tracks may only use tts or separate")
         return self
 
 

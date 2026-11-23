@@ -1,0 +1,104 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createServer } from "vite";
+
+const base = {
+  status: "idle",
+  stage: null,
+  error: null,
+  version: 1,
+  asset_version: 1,
+  updated_at: "",
+  video: { video_id: "v", frame_count: 213, fps: 30, duration_sec: 7.1, width: 1280, height: 720 },
+  timeline_rows: [],
+  audio_tracks: [],
+  audio_events: [],
+  track_targets: {},
+};
+
+test("TopBar shows the input badge, status line and a single primary button", async (context) => {
+  const server = await createServer({
+    appType: "custom",
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true },
+  });
+  context.after(() => server.close());
+  const { default: TopBar } = await server.ssrLoadModule("/src/components/TopBar.tsx");
+  const render = (props) =>
+    renderToStaticMarkup(
+      createElement(TopBar, { hasAudio: true, state: base, canGenerate: true, audioMode: "generate", onSetMode() {}, onOpen() {}, onGenerate() {}, ...props }),
+    );
+  const primaries = (html) => (html.match(/class="btn primary"/g) ?? []).length;
+
+  const idle = render({});
+  assert.match(idle, /Original audio/);
+  assert.match(idle, /Open video/);
+  assert.match(idle, /role="status"/);
+  assert.match(idle, /<button[^>]*class="btn primary"[^>]*>Generate audio</);
+  assert.equal(primaries(idle), 1);
+
+  assert.match(render({ hasAudio: false }), /Silent video/);
+  assert.doesNotMatch(render({ hasAudio: null }), /Original audio|Silent video/);
+
+  const running = render({ state: { ...base, status: "running", stage: "generating audio 2/4" } });
+  assert.match(running, /<button[^>]*disabled[^>]*>Generating…</);
+  assert.match(running, /Generating audio 2 of 4/);
+  assert.match(running, /role="progressbar"[^>]*aria-valuenow="2"[^>]*aria-valuemax="4"|aria-valuemax="4"[^>]*aria-valuenow="2"/);
+  assert.match(running, /width:50%/);
+  assert.equal(primaries(running), 1);
+
+  const spinning = render({ state: { ...base, status: "running", stage: "analyze scenes" } });
+  assert.match(spinning, /role="progressbar"/);
+  assert.doesNotMatch(spinning, /aria-valuenow/);
+
+  const done = render({ state: { ...base, status: "complete", audio_tracks: [{}, {}] } });
+  assert.match(done, /Done\. 2 tracks ready to play\./);
+
+  const failed = render({ state: { ...base, status: "failed", error: "Tools server unreachable." } });
+  assert.match(failed, /Tools server unreachable\./);
+
+  assert.match(render({ canGenerate: false }), /<button[^>]*disabled[^>]*>Generate audio</);
+
+  // mode choice: a radiogroup left of the one primary button
+  assert.match(idle, /role="radiogroup"/);
+  assert.match(idle, /role="radio"[^>]*aria-checked="true"[^>]*>Generate</);
+  assert.match(idle, /role="radio"[^>]*aria-checked="false"[^>]*>Separate</);
+  assert.ok(idle.indexOf('role="radiogroup"') < idle.indexOf('class="btn primary"'));
+
+  const silent = render({ hasAudio: false });
+  assert.match(silent, /<button[^>]*role="radio"[^>]*disabled=""[^>]*aria-describedby="no-audio-why"[^>]*>Separate</);
+  assert.match(silent, /<span class="mode-why" id="no-audio-why">No original audio to separate\.<\/span>/);
+  assert.doesNotMatch(idle, /No original audio to separate/);
+  assert.doesNotMatch(silent, /<button[^>]*role="radio"[^>]*disabled[^>]*>Generate</);
+
+  const separate = render({ audioMode: "separate" });
+  assert.match(separate, /<button[^>]*class="btn primary"[^>]*>Separate audio</);
+  assert.match(separate, /role="radio"[^>]*aria-checked="true"[^>]*>Separate</);
+  assert.equal(primaries(separate), 1);
+
+  const busy = render({ state: { ...base, status: "running", stage: "analyze scenes" } });
+  assert.equal((busy.match(/<button[^>]*role="radio"[^>]*disabled/g) ?? []).length, 2);
+
+  // no video loaded: both mode buttons are disabled
+  assert.equal((render({ canGenerate: false }).match(/<button[^>]*role="radio"[^>]*disabled/g) ?? []).length, 2);
+
+  // "Separating…" while separating
+  const separating = render({ audioMode: "separate", state: { ...base, status: "running", stage: "separating" } });
+  assert.match(separating, /<button[^>]*disabled[^>]*>Separating…</);
+  assert.doesNotMatch(separating, /Generating…/);
+
+  // re-selecting the current mode does not call onSetMode
+  const radios = [];
+  const walk = (node) => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!node || typeof node !== "object") return;
+    if (node.props?.role === "radio") radios.push(node);
+    walk(node.props?.children);
+  };
+  const calls = [];
+  walk(TopBar({ hasAudio: true, state: base, canGenerate: true, audioMode: "generate", onSetMode: (m) => calls.push(m), onOpen() {}, onGenerate() {} }));
+  radios.forEach((r) => r.props.onClick());
+  assert.deepEqual(calls, ["separate"]);
+});

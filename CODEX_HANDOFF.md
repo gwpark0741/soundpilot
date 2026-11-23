@@ -9,7 +9,7 @@
 - 기준 커밋: e9c024a (feat/audio-artifacts)
 - upstream: 설정되지 않음
 - origin: https://github.com/sogang-v2a/v2a_inspect
-- fork: https://github.com/gwpark0741/v2a_inspect
+- fork: https://github.com/gwpark0741/soundpilot
 - push: 수행하지 않음
 - 로컬 영상, 생성 결과, 가중치, 가상환경은 Git ignored 상태
 - 사용자 소유 로컬 파일은 삭제하지 않음

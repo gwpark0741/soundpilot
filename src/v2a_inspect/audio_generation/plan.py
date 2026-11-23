@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from v2a_inspect.models import AudioPlan, AudioPlanItem, SoundTimeline
+from uuid import UUID
+
+from v2a_inspect.models import AudioPlan, AudioPlanItem, SoundSource, SoundTimeline
 
 
 def build_audio_plan(
@@ -14,7 +16,9 @@ def build_audio_plan(
         raise ValueError("fps must be greater than zero")
 
     tracks = {track.sound_track_id: track for track in timeline.sound_tracks}
-    sources = {source.sound_source_id: source for source in timeline.sound_sources}
+    sources: dict[UUID | None, SoundSource] = {
+        source.sound_source_id: source for source in timeline.sound_sources
+    }
     items: list[AudioPlanItem] = []
 
     for event in timeline.sound_events:

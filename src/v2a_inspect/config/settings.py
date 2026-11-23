@@ -79,7 +79,7 @@ class Settings(BaseSettings):
         ),
     )
     llm_large_model: str = Field(
-        default="gemini-3.5-flash",
+        default="gemini-4-hydrogen",
         validation_alias=AliasChoices(
             "V2A_INSPECT_LLM_LARGE_MODEL",
             "V2A_LLM_LARGE_MODEL",
@@ -182,6 +182,34 @@ class Settings(BaseSettings):
     elevenlabs_api_key: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("ELEVENLABS_API_KEY"),
+    )
+    tts_provider: Literal["elevenlabs", "kokoro"] = Field(
+        default="elevenlabs",
+        validation_alias=AliasChoices("V2A_INSPECT_TTS_PROVIDER"),
+    )
+    elevenlabs_tts_voice_id: str = Field(
+        default="21m00Tcm4TlvDq8ikWAM",
+        validation_alias=AliasChoices("V2A_INSPECT_ELEVENLABS_TTS_VOICE_ID"),
+    )
+    elevenlabs_tts_model: str = Field(
+        default="eleven_multilingual_v2",
+        validation_alias=AliasChoices("V2A_INSPECT_ELEVENLABS_TTS_MODEL"),
+    )
+    audyssey_tools_url: str = Field(
+        default="http://127.0.0.1:8700",
+        validation_alias=AliasChoices("V2A_INSPECT_AUDYSSEY_TOOLS_URL"),
+    )
+    audyssey_tool_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("V2A_INSPECT_AUDYSSEY_TOOL_TOKEN"),
+    )
+    selsync_seed: int = Field(
+        default=42,
+        validation_alias=AliasChoices("V2A_INSPECT_SELSYNC_SEED"),
+    )
+    track_description_default: Literal["label", "first_event"] = Field(
+        default="label",
+        validation_alias=AliasChoices("V2A_INSPECT_TRACK_DESCRIPTION_DEFAULT"),
     )
     agent_sound_timeline_recursion_limit: int = Field(
         default=500,

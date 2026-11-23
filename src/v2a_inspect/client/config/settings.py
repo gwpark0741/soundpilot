@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     server_host: str = "localhost"
     server_port: int = 8080
+    server_token: str = ""
     timeout: float = 300.0
     max_retries: int = 3
     retry_backoff_seconds: float = 10.0

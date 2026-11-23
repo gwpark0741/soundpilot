@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import Field, computed_field
@@ -8,6 +9,11 @@ from .base import SchemaModel
 from .initial_scene import InitialScene
 from .sound_timeline import SoundTimeline
 from .visual_identity import VisualIdentityLayer
+
+
+class TrackStatus(SchemaModel):
+    state: Literal["running", "done", "failed"]
+    error: str | None = None
 
 
 class VideoAsset(SchemaModel):
@@ -30,6 +36,8 @@ class VideoAsset(SchemaModel):
     initial_scenes: list[InitialScene] = Field(default_factory=list)
     visual_identity_layer: VisualIdentityLayer | None = None
     sound_timeline: SoundTimeline | None = None
+    # The other audio mode's timeline (generate <-> separate), swapped in on a mode change.
+    inactive_timeline: SoundTimeline | None = None
     synthesized_video_path: Path | None = None
     sound_event_audio_artifacts: list[SoundEventAudioArtifact] = Field(
         default_factory=list
@@ -37,6 +45,14 @@ class VideoAsset(SchemaModel):
     sound_track_audio_artifacts: list[SoundTrackAudioArtifact] = Field(
         default_factory=list
     )
+    raw_video_path: Path | None = None
+    original_audio_path: Path | None = None
+    has_audio: bool = False
+    audio_mode: Literal["generate", "separate"] = "generate"
+    separated_stem_paths: dict[UUID, Path] = Field(default_factory=dict)
+    track_status: dict[UUID, TrackStatus] = Field(default_factory=dict)
+    residual_path: Path | None = None
+    residual_enabled: bool = False
 
     @computed_field
     @property

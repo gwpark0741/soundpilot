@@ -7,6 +7,8 @@ from typing import Literal
 
 from v2a_inspect.models import VideoAsset
 
+from .projects import save_project_logged
+
 RunStatus = Literal["idle", "running", "complete", "failed"]
 
 
@@ -48,6 +50,9 @@ class VideoAssetStore:
     async def set_complete_asset(
         self, video_asset: VideoAsset, *, stage: str | None = None
     ) -> None:
+        # Saved before the state is published, but outside the lock: /api/video range
+        # requests and SSE must not wait for the disk write.
+        await asyncio.to_thread(save_project_logged, video_asset)
         async with self._condition:
             self._asset = video_asset
             self._status = "complete"
@@ -74,6 +79,10 @@ class VideoAssetStore:
             self._bump_locked()
 
     async def set_complete(self, *, stage: str = "complete") -> None:
+        async with self._condition:
+            asset = self._asset
+        if asset is not None:
+            await asyncio.to_thread(save_project_logged, asset)
         async with self._condition:
             self._status = "complete"
             self._current_stage = stage

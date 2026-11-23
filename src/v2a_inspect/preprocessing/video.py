@@ -3,6 +3,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import numpy as np
+from scipy.io import wavfile
+
 from v2a_inspect.config import settings
 from v2a_inspect.media_utils import (
     PREPARED_FPS,
@@ -129,6 +132,71 @@ def _h264_encoder_args(fps: int) -> list[str]:
     ]
 
 
+SILENCE_PEAK = 10 ** (-60 / 20)
+
+
+def extract_original_audio(raw_video_path: Path, out_path: Path) -> Path | None:
+    """
+    Extract the raw video's audio as 48 kHz mono pcm_f32le WAV.
+
+    Returns None when there is no audio stream or the peak is below -60 dBFS.
+    """
+
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            str(raw_video_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        raise RuntimeError(f"Could not probe audio: {probe.stderr.strip()}")
+    if not probe.stdout.strip():
+        return None
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(raw_video_path),
+            "-vn",
+            "-ar",
+            "48000",
+            "-c:a",
+            "pcm_f32le",
+            "-ac",
+            "1",
+            str(out_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Could not extract audio: {result.stderr.strip()}")
+
+    _, samples = wavfile.read(out_path)
+    if samples.size == 0 or np.abs(samples).max() < SILENCE_PEAK:
+        out_path.unlink()
+        return None
+    return out_path
+
+
 def prepare_video(raw_video_path: Path, work_dir: Path) -> VideoAsset:
     """Normalize a raw video and return the prepared pipeline VideoAsset."""
 
@@ -145,8 +213,14 @@ def prepare_video(raw_video_path: Path, work_dir: Path) -> VideoAsset:
             f"got {sam3_probe.frame_count} and {probe.frame_count}"
         )
 
+    original_audio_path = extract_original_audio(
+        raw_video_path, work_dir / f"{raw_video_path.stem}.original.wav"
+    )
     return VideoAsset(
         source_path=probe.path,
         sam3_tracking_path=sam3_probe.path,
         frame_count=probe.frame_count,
+        raw_video_path=raw_video_path,
+        original_audio_path=original_audio_path,
+        has_audio=original_audio_path is not None,
     )

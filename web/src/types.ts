@@ -1,7 +1,8 @@
 export type RunStatus = "idle" | "running" | "complete" | "failed";
 
 export type SoundTrackType = "speech" | "sfx" | "ambience";
-export type GenerationModel = "t2a" | "v2a" | "tts";
+export type GenerationModel = "t2a" | "v2a" | "tts" | "separate" | "selsync";
+export type TrackStatus = { state: "running" | "done" | "failed"; error?: string | null };
 
 export interface AssetResponse {
   status: RunStatus;
@@ -14,6 +15,8 @@ export interface AssetResponse {
   timeline_rows: TimelineRow[];
   audio_tracks: AudioTrackArtifact[];
   audio_events: AudioEventArtifact[];
+  track_targets: Record<string, string[]>;
+  track_target_fallbacks: Record<string, string[]>;
 }
 
 export interface FullAssetResponse extends AssetResponse {
@@ -41,6 +44,14 @@ export interface VideoAsset {
   synthesized_video_path?: string | null;
   sound_event_audio_artifacts?: AudioEventArtifact[];
   sound_track_audio_artifacts?: AudioTrackArtifact[];
+  raw_video_path?: string | null;
+  original_audio_path?: string | null;
+  has_audio?: boolean;
+  audio_mode?: "generate" | "separate";
+  separated_stem_paths?: Record<string, string>;
+  track_status?: Record<string, TrackStatus>;
+  residual_path?: string | null;
+  residual_enabled?: boolean;
 }
 
 
@@ -61,6 +72,11 @@ export interface AudioTrackArtifact {
   duration_sec: number;
   event_count: number;
   waveform_peaks: number[];
+  origin?: "mixed" | "separated" | "generated";
+  seed?: number | null;
+  attempt?: number | null;
+  description?: string | null;
+  clip_path?: string | null;
 }
 
 export interface VideoSummary {
@@ -113,6 +129,7 @@ export interface TrackWindowResponse {
 export interface TrackWindowTrack {
   scene: number;
   track: number;
+  scene_track_id: string;
   label: string;
   start_frame: number;
   end_frame: number;
@@ -124,6 +141,7 @@ export interface TrackWindowPoint {
   frame_index: number;
   bbox_xyxy: [number, number, number, number];
   confidence: number;
+  mask_rle?: string | null;
 }
 
 export interface VisualIdentityLayer {
@@ -160,6 +178,12 @@ export interface SoundTrack {
   canonical_key?: string | null;
   sound_source_id?: string | null;
   generation_model: GenerationModel;
+  agent_model?: "t2a" | "v2a" | "tts" | null;
+  description?: string | null;
+  // Non-destructive trim/move of the track's audio, in seconds (see lib/clip.ts).
+  clip_start_sec?: number | null;
+  clip_end_sec?: number | null;
+  clip_offset_sec?: number;
   notes?: string | null;
 }
 
@@ -181,56 +205,21 @@ export interface TimelineRow {
   kind: string;
   sound_event_id?: string;
   sound_track_id?: string;
+  scene_track_id?: string;
   generation_model?: GenerationModel;
   spoken_text?: string | null;
 }
 
-export interface CurrentFrameRows {
-  scene: SceneFrameRow | null;
-  tracks: TrackFrameRow[];
-  visual_events: VisualEventFrameRow[];
-  sound_events: SoundEventFrameRow[];
-}
-
-export interface SceneFrameRow {
-  scene: number;
-  start_frame: number;
-  end_frame: number;
-  duration_sec: number;
-}
-
-export interface TrackFrameRow {
-  scene: number;
-  track: number;
-  label: string;
-  bbox: number[] | null;
-  confidence: number;
-  has_mask: boolean;
-}
-
-export interface VisualEventFrameRow {
-  object: string;
-  related: string;
-  event_type: string;
-  start_frame: number;
-  end_frame: number;
-  duration_sec: number;
-  confidence: number;
-  description: string;
-  notes: string | null;
-}
-
-export interface SoundEventFrameRow {
-  sound_event_id?: string;
-  sound_track_id: string;
-  track_label: string;
-  track_type: string;
-  source: string | null;
-  start_frame: number;
-  end_frame: number;
-  duration_sec: number;
-  generation_model: GenerationModel;
-  description: string;
-  spoken_text: string | null;
-  notes: string | null;
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  created: string;
+  updated: string;
+  duration_sec: number | null;
+  audio_mode: "generate" | "separate" | null;
+  scenes: number;
+  objects: number;
+  tracks: number;
+  has_preview: boolean;
+  status: "complete" | "running" | "failed";
 }

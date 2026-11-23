@@ -1,87 +1,71 @@
 name: Publish Image
 
+# Builds the single RunPod image (UI + inference server + Audyssey tools, Dockerfile.runpod)
+# and pushes ghcr.io/<owner>/soundpilot:latest and :<commit sha>. The UI and server images are
+# built here from this repo as stages and are not pushed; the tools image is a pinned prebuilt
+# package because its code lives in the Audyssey repo.
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+    # Only what the images copy; docs, tests and CI-only changes keep the current image.
+    paths:
+      - src/**
+      - server/**
+      - web/**
+      - scripts/runpod/**
+      - pyproject.toml
+      - uv.lock
+      - Dockerfile
+      - Dockerfile.runpod
+      - .dockerignore
+      - .github/workflows/publish-image.yaml
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  SERVER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/v2a_inspect_server
+  IMAGE: ghcr.io/${{ github.repository_owner }}/soundpilot
+  # Audyssey tools verified with SoundPilot end to end on 2026-11-23 (sv3). Change only after re-verifying.
+  TOOLS_IMAGE: ghcr.io/${{ github.repository_owner }}/soundpilot-tools:demo-1117
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max,compression=zstd,compression-level=3,force-compression=true
-          outputs: |
-            type=image,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true
-
-  publish-server:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Determine tags
-        id: meta
+      - name: Free disk (stages and the final image need about 30 GB)
         run: |
-          REF_SLUG=$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
-          echo "ref_slug=${REF_SLUG}" >> "$GITHUB_OUTPUT"
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
 
-      - name: Build and push server image
-        uses: docker/build-push-action@v7
+      - uses: docker/login-action@v3
         with:
-          context: .
-          file: ./server/Dockerfile
-          push: true
-          tags: |
-            ${{ env.SERVER_IMAGE_NAME }}:${{ steps.meta.outputs.ref_slug }}
-            ${{ env.SERVER_IMAGE_NAME }}:sha-${{ github.sha }}
-            ${{ env.SERVER_IMAGE_NAME }}:latest
-          cache-from: type=registry,ref=${{ env.SERVER_IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.SERVER_IMAGE_NAME }}:buildcache,mode=max,compression=zstd,compression-level=3,force-compression=true
-          outputs: |
-            type=image,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Plain `docker build` (default builder) so the final build can use the local stage images.
+      - name: Build the UI and server stages
+        run: |
+          docker build -f Dockerfile -t soundpilot-ui:ci .
+          docker build -f server/Dockerfile -t soundpilot-server:ci .
+          docker builder prune -af
+          df -h /
+
+      - name: Build the single image
+        run: |
+          docker build -f Dockerfile.runpod \
+            --build-arg UI_IMAGE=soundpilot-ui:ci \
+            --build-arg SERVER_IMAGE=soundpilot-server:ci \
+            --build-arg TOOLS_IMAGE="$TOOLS_IMAGE" \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            -t "$IMAGE:latest" -t "$IMAGE:${{ github.sha }}" .
+          df -h /
+
+      - name: Push
+        run: |
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"

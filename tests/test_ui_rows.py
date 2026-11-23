@@ -13,10 +13,22 @@ from v2a_inspect.models import (
     VideoAsset,
 )
 from v2a_inspect.ui.routes import _delete_asset_work_dir, _keyframe_response_path
-from v2a_inspect.ui.rows import timeline_rows
+from v2a_inspect.ui.rows import timeline_rows, tracking_window_rows
 
 
 class TimelineRowsTest(unittest.TestCase):
+    def test_tracking_window_has_track_id_and_mask_rle(self) -> None:
+        asset = VideoAsset.model_validate_json(
+            Path("samples/sample.video-asset.json").read_text()
+        )
+
+        rows = tracking_window_rows(asset, 0, 30)
+
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertTrue(row["scene_track_id"])
+        self.assertTrue(rows[0]["points"][0]["mask_rle"].startswith('{"encoding":"coco_rle"'))
+
     def test_speech_row_preserves_text_and_tts_model(self) -> None:
         track = SoundTrack(track_type="speech", label="Narrator")
         event = SoundEvent(
