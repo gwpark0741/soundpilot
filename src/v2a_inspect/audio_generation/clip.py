@@ -10,6 +10,7 @@ from scipy.io import wavfile
 from v2a_inspect.models import SoundTrack
 
 MIN_CLIP_SEC = 0.1
+FADE_SEC = 0.005  # linear fade at both ends of the placed piece, so a hard cut does not click
 
 
 def resolve_clip(track: SoundTrack, stem_duration: float) -> tuple[float, float, float]:
@@ -46,13 +47,20 @@ def render_clip_wav(
     offset: float,
     video_duration: float,
 ) -> Path:
-    """Write a video-length WAV: silence, with src[start:end] placed at start + offset."""
+    """Write a video-length WAV: silence, with src[start:end] placed at start + offset and faded at both ends."""
     rate, data = wavfile.read(src)
     total = round(video_duration * rate)
     out = np.zeros((total, *data.shape[1:]), dtype=data.dtype)
     piece = data[round(start * rate) : round(end * rate)]
     pos = max(0, round((start + offset) * rate))
     piece = piece[: max(0, total - pos)]
+    fade = min(round(FADE_SEC * rate), len(piece) // 2)
+    if fade:
+        gain = np.ones(len(piece))
+        ramp = np.arange(fade) / fade
+        gain[:fade] = ramp
+        gain[-fade:] = ramp[::-1]
+        piece = (piece * gain.reshape(-1, *[1] * (piece.ndim - 1))).astype(data.dtype)
     out[pos : pos + len(piece)] = piece
     wavfile.write(dst, rate, out)
     return dst

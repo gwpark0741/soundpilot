@@ -144,8 +144,13 @@ class ClipMathTest(unittest.TestCase):
             rate, out = wavfile.read(root / "out.wav")
             self.assertEqual((rate, len(out)), (RATE, 4000))
             self.assertTrue(np.all(out[:1500] == 0))
-            self.assertTrue(np.array_equal(out[1500:3000], np.arange(1000, 2500)))
+            # The slice is untouched except for the 5 ms (5 sample) fades at both ends.
+            self.assertTrue(np.array_equal(out[1505:2995], np.arange(1005, 2495)))
             self.assertTrue(np.all(out[3000:] == 0))
+            self.assertEqual((out[1500], out[2999]), (0, 0))
+            self.assertTrue(np.all(np.diff(out[1500:1506]) > 0))
+            self.assertTrue(np.all(np.diff(out[2994:3000]) < 0))
+            self.assertLess(out[1502], 1002)
 
     def test_render_moves_before_the_stem_start(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -159,7 +164,8 @@ class ClipMathTest(unittest.TestCase):
                 video_duration=4.0,
             )
             _, out = wavfile.read(root / "out.wav")
-            self.assertTrue(np.array_equal(out[:1000], np.arange(2000, 3000)))
+            self.assertTrue(np.array_equal(out[5:995], np.arange(2005, 2995)))
+            self.assertEqual((out[0], out[999]), (0, 0))
             self.assertTrue(np.all(out[1000:] == 0))
 
 
@@ -328,7 +334,7 @@ class TrackEditPipelineTest(unittest.TestCase):
             self.assertEqual(mixed[str(door.sound_track_id)], str(door_art.clip_path))
             self.assertEqual(mixed[str(wind.sound_track_id)], str(wind_art.path))
             _, out = wavfile.read(door_art.clip_path)
-            self.assertTrue(np.array_equal(out[1500:3000], np.arange(1000, 2500)))
+            self.assertTrue(np.array_equal(out[1505:2995], np.arange(1005, 2495)))  # faded ends
 
             app = FastAPI()
             app.include_router(create_router(store))
