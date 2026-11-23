@@ -19,6 +19,7 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal, Self, TypeVar
+from uuid import UUID
 
 import numpy as np
 from google import genai
@@ -29,7 +30,17 @@ from scipy.signal import resample_poly
 
 from v2a_inspect.audio_generation.routing import route_tracks
 from v2a_inspect.config import get_settings
-from v2a_inspect.models import SoundEvent, SoundSource, SoundTimeline, SoundTrack, VideoAsset
+from v2a_inspect.models import (
+    SceneTrack,
+    SceneTrackPoint,
+    SoundEvent,
+    SoundSource,
+    SoundTimeline,
+    SoundTrack,
+    VideoAsset,
+    VisualIdentityLayer,
+)
+from v2a_inspect.visualization.masks import decode_mask_ref
 
 log = logging.getLogger(__name__)
 
@@ -466,6 +477,92 @@ def to_timeline(plans: list[SourcePlan], *, fps: int, frame_count: int) -> Sound
     return route_tracks(timeline, mode="separate", has_audio=True)  # fills agent_model
 
 
+_LINK_IOU = 0.1
+_LINK_FRAME_SLACK = 2
+
+Box = tuple[float, float, float, float]
+
+
+def _point_box(point: SceneTrackPoint, frame_size: tuple[int, int]) -> Box | None:
+    """The point's box as normalized x0,y0,x1,y1; a mask-only point uses its mask's bounding box."""
+    width, height = frame_size
+    box = point.bbox_xyxy
+    if box is None:
+        try:
+            mask = decode_mask_ref(point.mask)  # type: ignore[arg-type]  # a point has a box or a mask
+            ys, xs = np.nonzero(mask)
+        except Exception:  # noqa: BLE001 - an unreadable mask only drops this point
+            return None
+        if xs.size == 0:
+            return None
+        box = (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1)
+    return (box[0] / width, box[1] / height, box[2] / width, box[3] / height)
+
+
+def _iou(a: Box, b: Box) -> float:
+    w = min(a[2], b[2]) - max(a[0], b[0])
+    h = min(a[3], b[3]) - max(a[1], b[1])
+    inter = max(0.0, w) * max(0.0, h)
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def link_visual_objects(
+    timeline: SoundTimeline,
+    plans: list[SourcePlan],
+    scene_tracks: list[SceneTrack],
+    identity: VisualIdentityLayer | None,
+    *,
+    fps: int,
+    frame_count: int,
+    frame_size: tuple[int, int],
+) -> SoundTimeline:
+    """Set visual_object_id on sources whose visual_hint box matches a SAM3 track box at the hint time.
+
+    Picks the track with the best IoU (>= 0.1), else the only track whose box contains the
+    hint center. Sources stay unlinked when nothing matches. `plans` is the list `timeline`
+    was built from (same order).
+    """
+    hinted = sum(p.visual_hint is not None for p in plans)
+    if identity is None or not scene_tracks or len(plans) != len(timeline.sound_sources):
+        log.info("separation link: no tracking data, 0/%d hinted sources linked", hinted)
+        return timeline
+    object_of: dict[UUID, UUID] = {}
+    for obj in identity.visual_objects:
+        for presence in obj.presences:
+            if presence.scene_track_id is not None:
+                object_of.setdefault(presence.scene_track_id, obj.visual_object_id)
+    sources, linked = [], 0
+    for source, item in zip(timeline.sound_sources, plans, strict=True):
+        hint = item.visual_hint
+        sources.append(source)
+        if hint is None:
+            continue
+        frame = max(0, min(frame_count - 1, round(hint.time * fps)))
+        boxes: list[tuple[Box, SceneTrack]] = []
+        for track in scene_tracks:
+            if track.scene_track_id not in object_of:
+                continue
+            near = sorted(
+                (p for p in track.points if abs(p.frame_index - frame) <= _LINK_FRAME_SLACK),
+                key=lambda p: abs(p.frame_index - frame),
+            )
+            box = next((b for b in (_point_box(p, frame_size) for p in near) if b), None)
+            if box is not None:
+                boxes.append((box, track))
+        scored = [(_iou(hint.box, box), track) for box, track in boxes]
+        best_iou, best = max(scored, key=lambda x: x[0], default=(0.0, None))
+        if best is None or best_iou < _LINK_IOU:
+            cx, cy = (hint.box[0] + hint.box[2]) / 2, (hint.box[1] + hint.box[3]) / 2
+            inside = [t for b, t in boxes if b[0] <= cx <= b[2] and b[1] <= cy <= b[3]]
+            best = inside[0] if len(inside) == 1 else None
+        if best is not None:
+            sources[-1] = source.model_copy(update={"visual_object_id": object_of[best.scene_track_id]})
+            linked += 1
+    log.info("separation link: %d/%d hinted sources linked to visual objects", linked, hinted)
+    return timeline.model_copy(update={"sound_sources": sources})
+
+
 def _plan_rounds(
     llm: _Gemini, clip: types.Part, samples: np.ndarray, duration: float
 ) -> tuple[list[SourcePlan], list[PlanIssue]]:
@@ -514,6 +611,18 @@ def plan_separation(
             llm.model, len(accepted), len(dropped), time.monotonic() - started, llm.usage,
         )  # fmt: skip
     timeline = to_timeline(accepted, fps=video_asset.fps, frame_count=video_asset.frame_count)
+    try:
+        timeline = link_visual_objects(
+            timeline,
+            accepted,
+            [t for scene in video_asset.initial_scenes for t in scene.scene_tracks],
+            video_asset.visual_identity_layer,
+            fps=video_asset.fps,
+            frame_count=video_asset.frame_count,
+            frame_size=(video_asset.width, video_asset.height),
+        )
+    except Exception:  # noqa: BLE001 - linking must never fail planning
+        log.info("separation link failed; sources stay unlinked", exc_info=True)
     return timeline, dropped
 
 

@@ -12,7 +12,16 @@ import pytest
 from google.genai import types
 
 from v2a_inspect import separation_planning as sp
-from v2a_inspect.models import SoundTimeline, SoundTrack, VideoAsset
+from v2a_inspect.models import (
+    SceneTrack,
+    SceneTrackPoint,
+    SoundTimeline,
+    SoundTrack,
+    VideoAsset,
+    VisualIdentityLayer,
+    VisualObject,
+    VisualPresence,
+)
 from v2a_inspect.ui.bundle import read_bundle, write_bundle
 from v2a_inspect.ui.pipeline import run_separation_planning_pipeline
 from v2a_inspect.ui.store import VideoAssetStore
@@ -307,3 +316,78 @@ def test_bundle_round_trips_inactive_timeline(tmp_path: Path) -> None:
     write_bundle(asset, root, buf)
     buf.seek(0)
     assert read_bundle(buf, tmp_path / "b" / "v2a-inspect-ui").inactive_timeline == separation
+
+
+def _scene_track(box_px, frame=30) -> SceneTrack:
+    point = SceneTrackPoint(frame_index=frame, bbox_xyxy=box_px, confidence=0.9)
+    return SceneTrack(tracking_prompt="x", points=[point], confidence=0.9)
+
+
+def _identity(*tracks: SceneTrack) -> VisualIdentityLayer:
+    objects = [
+        VisualObject(
+            label=f"obj{i}",
+            presences=[VisualPresence(start_frame_index=0, end_frame_index=60, state="visible", scene_track_id=t.scene_track_id)],
+        )
+        for i, t in enumerate(tracks)
+    ]
+    return VisualIdentityLayer(visual_objects=objects)
+
+
+def _link(plans, tracks, identity="auto"):
+    timeline = sp.to_timeline(plans, fps=30, frame_count=60)
+    identity = _identity(*tracks) if identity == "auto" else identity
+    linked = sp.link_visual_objects(
+        timeline, plans, tracks, identity, fps=30, frame_count=60, frame_size=(1280, 720)
+    )
+    return timeline, linked, identity
+
+
+def _hinted(box, time=1.0, name="Dog") -> sp.SourcePlan:
+    plan = _plan(name)
+    return plan.model_copy(update={"visual_hint": sp.VisualHint(time=time, box=box, description="x")})
+
+
+def test_link_picks_the_track_with_the_best_iou() -> None:
+    left = _scene_track((0, 0, 640, 360))
+    right = _scene_track((640, 0, 1280, 360))
+    _, linked, identity = _link([_hinted((0.55, 0.0, 1.0, 0.5))], [left, right])  # frame 30, x-first normalized
+    assert linked.sound_sources[0].visual_object_id == identity.visual_objects[1].visual_object_id
+    assert linked.sound_sources[0].source_type == "visual_object"
+
+
+def test_link_uses_a_point_within_two_frames_only() -> None:
+    near = _scene_track((0, 0, 640, 360), frame=32)
+    far = _scene_track((0, 0, 640, 360), frame=33)
+    _, linked, identity = _link([_hinted((0, 0, 0.5, 0.5))], [far, near])
+    assert linked.sound_sources[0].visual_object_id == identity.visual_objects[1].visual_object_id
+
+
+def test_link_falls_back_to_the_only_box_containing_the_hint_center() -> None:
+    big = _scene_track((0, 0, 1280, 720))
+    # hint center (0.5, 0.5); IoU with the full-frame box is 0.04 < 0.1
+    _, linked, identity = _link([_hinted((0.4, 0.4, 0.6, 0.6))], [big])
+    assert linked.sound_sources[0].visual_object_id == identity.visual_objects[0].visual_object_id
+
+
+def test_link_center_fallback_is_skipped_when_ambiguous() -> None:
+    a, b = _scene_track((0, 0, 1280, 720)), _scene_track((0, 0, 1280, 720))
+    _, linked, _ = _link([_hinted((0.4, 0.4, 0.6, 0.6))], [a, b])
+    assert linked.sound_sources[0].visual_object_id is None
+
+
+def test_link_leaves_unmatched_and_offscreen_sources_unlinked() -> None:
+    corner = _scene_track((1200, 640, 1280, 720))
+    plans = [_hinted((0.0, 0.0, 0.2, 0.2)), _plan("Siren", hint=False)]
+    _, linked, _ = _link(plans, [corner])
+    assert [s.visual_object_id for s in linked.sound_sources] == [None, None]
+    assert linked.sound_sources[1].source_type == "offscreen_unknown"
+
+
+def test_link_without_tracking_data_returns_the_timeline_unchanged() -> None:
+    plans = [_hinted((0, 0, 0.5, 0.5))]
+    timeline, no_tracks, _ = _link(plans, [])
+    assert no_tracks is timeline
+    track = _scene_track((0, 0, 640, 360))
+    timeline, no_identity, _ = _link(plans, [track], identity=None)
+    assert no_identity is timeline
