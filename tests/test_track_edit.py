@@ -72,7 +72,8 @@ def _stem(root: Path, track: SoundTrack, name: str) -> SoundTrackAudioArtifact:
 def _asset(root: Path, labels=("Door", "Wind")) -> tuple[VideoAsset, list[SoundTrack]]:
     sources, tracks, events = [], [], []
     for label in labels:
-        source = SoundSource(source_type="offscreen_unknown", label=label)
+        # A visual-object source routes to SelSync (faked in these tests), never to ElevenLabs.
+        source = SoundSource(source_type="visual_object", label=label)
         track = SoundTrack(
             track_type="sfx",
             label=label,
