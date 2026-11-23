@@ -66,6 +66,8 @@ services:
     environment:
       <<: *hf-env
       AUDYSSEY_TOOL_TOKEN: ${AUDYSSEY_TOOL_TOKEN:?set AUDYSSEY_TOOL_TOKEN in .env.demo}
+      # Audyssey's separation reranking: 8 candidates, best by the CLAP + SAM Audio Judge ensemble
+      AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES: ${AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES:-8}
     volumes:
       - *hf-volume
     healthcheck:
