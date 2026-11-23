@@ -66,7 +66,8 @@ def set_clip(
         stem_duration=stem.duration_sec,
         video_duration=asset.duration_sec,
     )
-    if start == 0.0 and end >= stem.duration_sec and offset == 0.0:
+    # artifact duration_sec is rounded to 1 ms, so the full extent can arrive a hair short of it
+    if start == 0.0 and end >= stem.duration_sec - 1e-3 and offset == 0.0:
         return _replace_track(
             asset,
             track.model_copy(

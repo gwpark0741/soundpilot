@@ -189,6 +189,22 @@ class TrackEditTest(unittest.TestCase):
             cleared = set_clip(clipped, door.sound_track_id, 0.0, 4.0, 0.0)
             self.assertFalse(cleared.sound_timeline.sound_tracks[0].has_clip)
 
+    def test_set_clip_full_extent_within_a_millisecond_clears(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, (door, _) = _asset(Path(temp_dir))
+            rounded = asset.model_copy(
+                update={
+                    "sound_track_audio_artifacts": [
+                        a.model_copy(update={"duration_sec": 3.767})
+                        for a in asset.sound_track_audio_artifacts
+                    ]
+                }
+            )
+            trimmed = set_clip(rounded, door.sound_track_id, 0.5, 3.0, 0.0)
+            self.assertTrue(trimmed.sound_timeline.sound_tracks[0].has_clip)
+            cleared = set_clip(trimmed, door.sound_track_id, 0.0, 3.7667, 0.0)
+            self.assertFalse(cleared.sound_timeline.sound_tracks[0].has_clip)
+
     def test_set_clip_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             asset, (door, _) = _asset(Path(temp_dir))

@@ -21,6 +21,9 @@ test("clip geometry and drag clamping", async (context) => {
   });
   assert.ok(c.isFullClip({ start: 0, end: 4, offset: 0 }, 4));
   assert.ok(!c.isFullClip({ start: 0, end: 4, offset: 0.1 }, 4));
+  // The artifact duration is rounded to 1 ms, so a clip a hair short of it is still the full extent.
+  assert.ok(c.isFullClip({ start: 0, end: 9.766666, offset: 0 }, 9.767));
+  assert.ok(!c.isFullClip({ start: 0, end: 9.7, offset: 0 }, 9.767));
 
   // Placed at start + offset on a 4 s timeline.
   assert.deepEqual(c.clipPlacement({ start: 1, end: 2.5, offset: 0.5 }, 4), { left: 37.5, width: 37.5 });

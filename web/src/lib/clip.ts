@@ -23,7 +23,7 @@ export function resolveClip(
 }
 
 export function isFullClip(clip: Clip, stemDuration: number): boolean {
-  return clip.start === 0 && clip.end >= stemDuration && clip.offset === 0;
+  return clip.start === 0 && clip.end >= stemDuration - 1e-3 && clip.offset === 0;
 }
 
 // Where the placed clip sits on a timeline of `timelineSec` seconds, in percent of its width.
