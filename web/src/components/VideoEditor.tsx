@@ -399,14 +399,17 @@ export default function VideoEditor({
     audio.onended = cleanup;
     audio.onerror = cleanup;
 
-    if (videoElement) {
-      void videoElement.play().catch(() => {
+    // A quick second press pauses these elements again, which rejects the pending play() with AbortError;
+    // that is not a failure, and cleanup() would stop the newer playback that reuses the cached element.
+    const onPlayError = (error: unknown) => {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
         cleanup();
-      });
+      }
+    };
+    if (videoElement) {
+      void videoElement.play().catch(onPlayError);
     }
-    void audio.play().catch(() => {
-      cleanup();
-    });
+    void audio.play().catch(onPlayError);
   }
 
   function playTrackAudio(soundTrackId: string, startFrame: number) {
@@ -467,7 +470,7 @@ export default function VideoEditor({
       playSyncedAudio(trackAudioUrl(next), currentFrame / fps, currentFrame);
     } else {
       stopPreviewAudio(true);
-      void video.play();
+      video.play().catch(() => {});
     }
   }
 
@@ -485,7 +488,7 @@ export default function VideoEditor({
       playSyncedAudio(trackAudioUrl(soloTrackId), selectedFrame / fps, selectedFrame);
     } else if (video) {
       stopPreviewAudio(true);
-      void video.play();
+      video.play().catch(() => {});
     }
   }
 
