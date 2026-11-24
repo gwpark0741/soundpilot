@@ -56,7 +56,7 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   assert.deepEqual(options(html({ track: track({ generation_model: "selsync" }), hasAudio: false })).map((o) => o[0]), ["selsync", "t2a"]);
   const speech = options(html({ track: track({ generation_model: "tts", track_type: "speech" }) }));
   assert.deepEqual(speech.map((o) => o[0]), ["selsync", "t2a", "tts", "separate"]);
-  assert.deepEqual(speech.find((o) => o[2]), ["tts", "ElevenLabs TTS", true]);
+  assert.deepEqual(speech.find((o) => o[2]), ["tts", "TTS", true]);
 
   // selsync track, audio video: Regenerate + Re-separate
   m = html({
@@ -182,7 +182,7 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   assert.equal(mainLabel("separate", "separate", false), "Re-separate");
   assert.equal(mainLabel("separate", "separate", true), "Regenerate with new spans");
   assert.equal(mainLabel("t2a", "selsync", false), "Regenerate with SelVA w/ SelSync");
-  assert.equal(mainLabel("selsync", "tts", false), "Regenerate with ElevenLabs TTS");
+  assert.equal(mainLabel("selsync", "tts", false), "Regenerate with TTS");
   assert.equal(mainLabel("t2a", "separate", false), "Separate");
   assert.equal(initialDescription(track({ generation_model: "t2a", description: "" }), undefined, evs), "Earliest");
   assert.equal(initialDescription(track({ generation_model: "t2a", description: "Own" }), undefined, evs), "Own");

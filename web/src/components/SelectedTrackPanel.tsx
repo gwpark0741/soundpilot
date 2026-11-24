@@ -50,7 +50,7 @@ const EVENT_LEVEL: ModelChoice[] = ["t2a", "tts"];
 const MODEL_LABEL: Record<ModelChoice, string> = {
   selsync: "SelVA w/ SelSync",
   t2a: "ElevenLabs",
-  tts: "ElevenLabs TTS",
+  tts: "TTS",
   separate: "Separate",
 };
 

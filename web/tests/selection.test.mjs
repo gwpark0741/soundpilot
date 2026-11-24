@@ -46,19 +46,19 @@ test("selection helpers", async (context) => {
 
   assert.equal(s.methodLabel("separate"), "Separated");
   assert.equal(s.methodLabel("selsync"), "SelVA w/ SelSync");
-  assert.equal(s.methodLabel("tts"), "ElevenLabs TTS");
+  assert.equal(s.methodLabel("tts"), "TTS");
   assert.equal(s.methodLabel("t2a"), "ElevenLabs");
   assert.equal(s.methodLabel("v2a"), "Hunyuan");
 
   // generationLabel mirrors the backend's generate-mode routing (agent_model unless a rule overrides)
   const t = (track_type, agent_model, generation_model = "separate") => ({ track_type, agent_model, generation_model });
-  assert.equal(s.generationLabel(t("speech", "v2a")), "ElevenLabs TTS");
+  assert.equal(s.generationLabel(t("speech", "v2a")), "TTS");
   assert.equal(s.generationLabel(t("ambience", "v2a")), "ElevenLabs");
   assert.equal(s.generationLabel(t("sfx", "v2a"), "scene_global"), "ElevenLabs");
   assert.equal(s.generationLabel(t("sfx", "v2a"), "offscreen_unknown"), "ElevenLabs");
   assert.equal(s.generationLabel(t("sfx", "v2a"), "visible_object"), "SelVA w/ SelSync");
   assert.equal(s.generationLabel(t("sfx", "t2a")), "ElevenLabs");
-  assert.equal(s.generationLabel(t("sfx", "tts")), "ElevenLabs TTS");
+  assert.equal(s.generationLabel(t("sfx", "tts")), "TTS");
   // old assets without agent_model: filled from generation_model, else from the track type
   assert.equal(s.generationLabel(t("sfx", null, "v2a")), "SelVA w/ SelSync");
   assert.equal(s.generationLabel(t("sfx", undefined, "t2a")), "ElevenLabs");
