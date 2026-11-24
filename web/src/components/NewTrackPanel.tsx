@@ -115,6 +115,10 @@ export default function NewTrackPanel({ spans, fps, hasAudio, blockedReason, onR
             Create and generate
           </button>
         </div>
+        <p className="hint">
+          <Icon name="info" />
+          Other tracks open again after Create and generate or Cancel. Cancel discards this new track.
+        </p>
       </form>
     </section>
   );

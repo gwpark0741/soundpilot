@@ -128,6 +128,7 @@ test("timeline edit mode, add track and delete track controls", async (context) 
   assert.match(np, /aria-label="Remove span 2\.3–4\.1 s"/);
   assert.match(np, /Drag on the New track lane to add a span\. Drag a span to move it, or its edges to resize\./);
   assert.match(np, />Cancel<\/button>/);
+  assert.match(np, /Other tracks open again after Create and generate or Cancel\. Cancel discards this new track\./);
   assert.ok(!np.includes("Spoken text"), "spoken text only for Kokoro");
   assert.match(np, /<button[^>]*disabled=""[^>]*>Create and generate/, "empty name and description");
   assert.match(panelNew({ hasAudio: false }), /<option value="separate" disabled=""/);
