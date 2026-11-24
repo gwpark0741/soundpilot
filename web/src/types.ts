@@ -184,6 +184,8 @@ export interface SoundTrack {
   clip_start_sec?: number | null;
   clip_end_sec?: number | null;
   clip_offset_sec?: number;
+  // Trim to spans: video seconds [start, end] where the audio is kept (silent elsewhere); null = no gate.
+  clip_segments?: [number, number][] | null;
   notes?: string | null;
 }
 

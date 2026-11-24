@@ -47,6 +47,11 @@ test("timeline edit mode, add track and delete track controls", async (context) 
       }),
     );
 
+  // A stored trim gate dims what it silences (here 1 s..4 s of 4 s), in either mode; no gate, no dimming.
+  const gated = timeline({ soundTracks: [{ ...track, clip_segments: [[0, 1]] }] });
+  assert.match(gated, /class="gate-dim" style="left:25%;width:75%"/);
+  assert.doesNotMatch(timeline(), /gate-dim/);
+
   // Default "Edit spans": event boxes stay, the background waveform is the placed clip (2 s..3 s of 4 s).
   let html = timeline({ onEditClip() {}, onAddTrack() {} });
   assert.match(html, /role="radio"[^>]*aria-checked="true"[^>]*>Edit spans|aria-checked="true"[^>]*role="radio"[^>]*>Edit spans/);
@@ -123,6 +128,7 @@ test("timeline edit mode, add track and delete track controls", async (context) 
   assert.match(np, /aria-label="Remove span 2\.3–4\.1 s"/);
   assert.match(np, /Drag on the New track lane to add a span\. Drag a span to move it, or its edges to resize\./);
   assert.match(np, />Cancel<\/button>/);
+  assert.match(np, /Other tracks open again after Create and generate or Cancel\. Cancel discards this new track\./);
   assert.ok(!np.includes("Spoken text"), "spoken text only for Kokoro");
   assert.match(np, /<button[^>]*disabled=""[^>]*>Create and generate/, "empty name and description");
   assert.match(panelNew({ hasAudio: false }), /<option value="separate" disabled=""/);

@@ -13,6 +13,8 @@ import {
   setAudioMode,
   setResidualEnabled,
   setTrackClip,
+  trimTrackToSpans,
+  undoTrackTrim,
   deleteTrack,
   createTrack,
   type NewTrack,
@@ -163,10 +165,11 @@ export default function App() {
     method: "separate" | "generate",
     description: string | null,
     events?: EventSpan[],
+    model?: "selsync" | "t2a" | "tts",
   ) {
     setSubmitError(null);
     try {
-      await regenerateTrackAudio(trackId, method, description ?? undefined, undefined, events);
+      await regenerateTrackAudio(trackId, method, description ?? undefined, undefined, events, model);
       await refreshAssetSummary();
     } catch (error) {
       // Top line: short summary. The full message goes next to the failed control.
@@ -207,6 +210,28 @@ export default function App() {
       // Top line: short summary. The full message goes next to the track.
       setSubmitError("Could not update the track audio.");
       throw new Error(failure("Could not update the track audio.", error, "Try the edit again."));
+    }
+  }
+
+  async function handleTrimTrack(trackId: string, events?: EventSpan[]) {
+    setSubmitError(null);
+    try {
+      await trimTrackToSpans(trackId, events);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError("Could not trim the track.");
+      throw new Error(failure("Could not trim the track.", error, "Try Trim to spans again."));
+    }
+  }
+
+  async function handleUndoTrim(trackId: string) {
+    setSubmitError(null);
+    try {
+      await undoTrackTrim(trackId);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError("Could not undo the trim.");
+      throw new Error(failure("Could not undo the trim.", error, "Try Undo trim again."));
     }
   }
 
@@ -256,6 +281,8 @@ export default function App() {
       onSetAudioMode={handleSetAudioMode}
       onSetResidual={handleSetResidual}
       onSetTrackClip={handleSetTrackClip}
+      onTrimTrack={handleTrimTrack}
+      onUndoTrim={handleUndoTrim}
       onDeleteTrack={handleDeleteTrack}
       onCreateTrack={handleCreateTrack}
     />

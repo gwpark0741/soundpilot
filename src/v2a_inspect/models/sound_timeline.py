@@ -58,6 +58,9 @@ class SoundTrack(SchemaModel):
     clip_start_sec: float | None = None
     clip_end_sec: float | None = None
     clip_offset_sec: float = 0.0
+    # Trim to spans: video-time [start, end] seconds where the (clipped) audio is kept; the rest is
+    # silent. None = no gate. Applied after the clip by render_clip_wav.
+    clip_segments: list[tuple[float, float]] | None = None
 
     notes: str | None = None
 
@@ -67,6 +70,7 @@ class SoundTrack(SchemaModel):
             self.clip_start_sec is not None
             or self.clip_end_sec is not None
             or self.clip_offset_sec != 0.0
+            or self.clip_segments is not None
         )
 
     @model_validator(mode="before")

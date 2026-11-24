@@ -15,7 +15,11 @@ from v2a_inspect.models import (
 )
 
 NewTrackModel = Literal["selsync", "t2a", "tts", "separate"]
-_AGENT_MODEL: dict[str, Literal["t2a", "v2a", "tts"]] = {"selsync": "v2a", "tts": "tts"}
+_AGENT_MODEL: dict[str, Literal["t2a", "v2a", "tts"]] = {
+    "selsync": "v2a",
+    "t2a": "t2a",
+    "tts": "tts",
+}
 
 
 def _timeline(asset: VideoAsset) -> SoundTimeline:
@@ -45,6 +49,7 @@ def reset_clips(
                 "clip_start_sec": None,
                 "clip_end_sec": None,
                 "clip_offset_sec": 0.0,
+                "clip_segments": None,
             }
         )
         if t.has_clip and (track_ids is None or t.sound_track_id in track_ids)
@@ -201,19 +206,32 @@ def add_track(
     return asset.model_copy(update={"sound_timeline": timeline}), track
 
 
+class LastEventError(ValueError):
+    """Deleting every event of a track."""
+
+
 def set_event_spans(
-    asset: VideoAsset, track_id: UUID, spans: dict[UUID, tuple[int, int]]
+    asset: VideoAsset,
+    track_id: UUID,
+    spans: dict[UUID, tuple[int, int]],
+    deleted: frozenset[UUID] = frozenset(),
 ) -> VideoAsset:
-    """Move the given events of one track; each must belong to it and fit in the video."""
+    """Move and delete events of one track; each must belong to it, moves must fit in the video.
+
+    Deleting drops the event with its audio artifact; a track keeps at least one event. Spans of
+    one track may overlap (no neighbour clamping), so a box can grow over a deleted box's range.
+    """
     timeline = _timeline(asset)
     own = {
         e.sound_event_id for e in timeline.sound_events if e.sound_track_id == track_id
     }
-    for event_id, (start, end) in spans.items():
-        if event_id not in own:
-            raise ValueError("The event does not belong to this track.")
+    if not (spans.keys() | deleted) <= own:
+        raise ValueError("The event does not belong to this track.")
+    for start, end in spans.values():
         if not 0 <= start < end <= asset.frame_count:
             raise ValueError("The event span is outside the video.")
+    if own and own <= deleted:
+        raise LastEventError("A track needs at least one span.")
     events = [
         e.model_copy(
             update={
@@ -224,7 +242,49 @@ def set_event_spans(
         if e.sound_event_id in spans
         else e
         for e in timeline.sound_events
+        if e.sound_event_id not in deleted
     ]
     return asset.model_copy(
-        update={"sound_timeline": timeline.model_copy(update={"sound_events": events})}
+        update={
+            "sound_timeline": timeline.model_copy(update={"sound_events": events}),
+            "sound_event_audio_artifacts": [
+                a
+                for a in asset.sound_event_audio_artifacts
+                if a.sound_event_id not in deleted
+            ],
+        }
     )
+
+
+def trim_segments(asset: VideoAsset, track_id: UUID) -> list[tuple[float, float]]:
+    """The track's event spans in video seconds, clamped to the video, overlaps merged."""
+    spans = sorted(
+        (
+            e.start_frame_index / asset.fps,
+            min(e.end_frame_index / asset.fps, asset.duration_sec),
+        )
+        for e in _timeline(asset).sound_events
+        if e.sound_track_id == track_id
+    )
+    merged: list[tuple[float, float]] = []
+    for start, end in spans:
+        if start >= end:
+            continue
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def set_trim(asset: VideoAsset, track_id: UUID, enabled: bool) -> VideoAsset:
+    """Gate the track's audio to its event spans (or lift the gate); the audio itself is untouched."""
+    track = next(
+        (t for t in _timeline(asset).sound_tracks if t.sound_track_id == track_id), None
+    )
+    if track is None:
+        raise LookupError("Sound track not found.")
+    if not any(a.sound_track_id == track_id for a in asset.sound_track_audio_artifacts):
+        raise ValueError("The track has no audio yet.")
+    segments = trim_segments(asset, track_id) if enabled else None
+    return _replace_track(asset, track.model_copy(update={"clip_segments": segments}))

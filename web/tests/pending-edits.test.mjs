@@ -34,3 +34,36 @@ test("pending span edits are re-applied onto fresh rows and sent per track", asy
   assert.deepEqual(withoutEvents(pending, sent), { e3: pending.e3 });
   assert.deepEqual(pending.e2, { start_frame: 50, end_frame: 80 });
 });
+
+test("removing a box is a pending edit that is re-applied, sent as deleted and refused for the last box", async (context) => {
+  const server = await createServer({ appType: "custom", optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true } });
+  context.after(() => server.close());
+  const { reapplyPending, trackEventSpans, removeEvent, isRemoved, withoutEvents } = await server.ssrLoadModule("/src/lib/pendingEdits.ts");
+
+  const row = (event, track, start, end) => ({ lane: "l", label: event, kind: "sfx", sound_event_id: event, sound_track_id: track, start_frame: start, end_frame: end });
+  const rows = [row("e1", "t1", 0, 30), row("e2", "t1", 40, 60), row("e3", "t2", 0, 10)];
+
+  // The second box goes; the track keeps its first box, which may then be resized over the removed range.
+  const pending = removeEvent(rows, {}, "e2");
+  assert.deepEqual(pending, { e2: { start_frame: 40, end_frame: 60, deleted: true, sound_track_id: "t1" } });
+  assert.ok(isRemoved(pending, "e2"));
+  assert.ok(!isRemoved(pending, "e1"));
+  const left = reapplyPending(rows, { ...pending, e1: { start_frame: 0, end_frame: 60 } });
+  assert.deepEqual(left.rows.map((r) => [r.sound_event_id, r.end_frame]), [["e1", 60], ["e3", 10]]);
+
+  // Removals travel with the track's other edits, flagged; other tracks are not touched.
+  assert.deepEqual(trackEventSpans(rows.filter((r) => r.sound_event_id !== "e2"), { ...pending, e1: { start_frame: 0, end_frame: 60 } }, "t1"), [
+    { sound_event_id: "e1", start_frame: 0, end_frame: 60 },
+    { sound_event_id: "e2", start_frame: 40, end_frame: 60, deleted: true },
+  ]);
+  assert.deepEqual(trackEventSpans(rows, pending, "t2"), []);
+  assert.deepEqual(withoutEvents(pending, trackEventSpans(rows, pending, "t1")), {});
+
+  // A removal of an event the server no longer has is dropped.
+  assert.deepEqual(reapplyPending(rows.filter((r) => r.sound_event_id !== "e2"), pending).pending, {});
+
+  // The only box of a track cannot be removed (also after its sibling was).
+  assert.equal(removeEvent(rows, {}, "e3"), null);
+  assert.equal(removeEvent(rows.filter((r) => r.sound_event_id !== "e2"), pending, "e1"), null);
+  assert.equal(removeEvent(rows, {}, "nope"), null);
+});

@@ -157,9 +157,13 @@ export async function regenerateTrackAudio(
   description?: string,
   seed?: number,
   events?: EventSpan[],
+  model?: "selsync" | "t2a" | "tts",
 ): Promise<void> {
   const formData = new FormData();
   formData.append("method", method);
+  if (model) {
+    formData.append("model", model);
+  }
   if (description) {
     formData.append("description", description);
   }
@@ -211,6 +215,27 @@ export async function setTrackClip(trackId: string, clip: Clip): Promise<void> {
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Failed to update track audio: ${response.status}`);
+  }
+}
+
+// Keeps the track's audio only inside its span boxes; `events` are the track's pending span edits.
+export async function trimTrackToSpans(trackId: string, events?: EventSpan[]): Promise<void> {
+  const formData = new FormData();
+  if (events?.length) {
+    formData.append("events", JSON.stringify(events));
+  }
+  const response = await fetch(`/api/audio/tracks/${trackId}/trim-to-spans`, { method: "POST", body: formData });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to trim the track: ${response.status}`);
+  }
+}
+
+export async function undoTrackTrim(trackId: string): Promise<void> {
+  const response = await fetch(`/api/audio/tracks/${trackId}/trim-to-spans`, { method: "DELETE" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to undo the trim: ${response.status}`);
   }
 }
 

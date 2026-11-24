@@ -28,11 +28,11 @@ export function fallbackMatchLabel(
 
 export function methodLabel(
   model: GenerationModel,
-): "Separated" | "SelVA w/ SelSync" | "ElevenLabs TTS" | "ElevenLabs" | "Hunyuan" {
+): "Separated" | "SelVA w/ SelSync" | "TTS" | "ElevenLabs" | "Hunyuan" {
   return {
     separate: "Separated",
     selsync: "SelVA w/ SelSync",
-    tts: "ElevenLabs TTS",
+    tts: "TTS",
     t2a: "ElevenLabs",
     v2a: "Hunyuan",
   }[model] as ReturnType<typeof methodLabel>;
@@ -43,14 +43,14 @@ export function methodLabel(
 export function generationLabel(
   track: Pick<SoundTrack, "track_type" | "agent_model" | "generation_model">,
   sourceType?: string,
-): "SelVA w/ SelSync" | "ElevenLabs" | "ElevenLabs TTS" {
-  if (track.track_type === "speech") return "ElevenLabs TTS";
+): "SelVA w/ SelSync" | "ElevenLabs" | "TTS" {
+  if (track.track_type === "speech") return "TTS";
   if (track.track_type === "ambience" || sourceType === "scene_global" || sourceType === "offscreen_unknown") {
     return "ElevenLabs";
   }
   const gm = track.generation_model;
   const agent = track.agent_model ?? (gm === "t2a" || gm === "v2a" || gm === "tts" ? gm : "v2a");
-  return agent === "v2a" ? "SelVA w/ SelSync" : agent === "tts" ? "ElevenLabs TTS" : "ElevenLabs";
+  return agent === "v2a" ? "SelVA w/ SelSync" : agent === "tts" ? "TTS" : "ElevenLabs";
 }
 
 export type TrackAction = "re-separate" | "generate-instead" | "regenerate";

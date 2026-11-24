@@ -40,6 +40,21 @@ def clamp_clip(
     return start, end, offset
 
 
+def _faded_ones(length: int, rate: int) -> np.ndarray:
+    """Unit gain with a FADE_SEC linear ramp at both ends (shorter when the piece is)."""
+    gain = np.ones(length)
+    fade = min(round(FADE_SEC * rate), length // 2)
+    if fade:
+        ramp = np.arange(fade) / fade
+        gain[:fade] = ramp
+        gain[-fade:] = ramp[::-1]
+    return gain
+
+
+def _apply_gain(data: np.ndarray, gain: np.ndarray) -> np.ndarray:
+    return (data * gain.reshape(-1, *[1] * (data.ndim - 1))).astype(data.dtype)
+
+
 def render_clip_wav(
     src: Path,
     dst: Path,
@@ -48,21 +63,26 @@ def render_clip_wav(
     end: float,
     offset: float,
     video_duration: float,
+    segments: list[tuple[float, float]] | None = None,
 ) -> Path:
-    """Write a video-length WAV: silence, with src[start:end] placed at start + offset and faded at both ends."""
+    """Write a video-length WAV: silence, with src[start:end] placed at start + offset and faded at both ends.
+
+    With `segments` (video seconds) only the audio inside them is kept, each faded at both boundaries.
+    """
     rate, data = wavfile.read(src)
     total = round(video_duration * rate)
     out = np.zeros((total, *data.shape[1:]), dtype=data.dtype)
     piece = data[round(start * rate) : round(end * rate)]
     pos = max(0, round((start + offset) * rate))
     piece = piece[: max(0, total - pos)]
-    fade = min(round(FADE_SEC * rate), len(piece) // 2)
-    if fade:
-        gain = np.ones(len(piece))
-        ramp = np.arange(fade) / fade
-        gain[:fade] = ramp
-        gain[-fade:] = ramp[::-1]
-        piece = (piece * gain.reshape(-1, *[1] * (piece.ndim - 1))).astype(data.dtype)
+    piece = _apply_gain(piece, _faded_ones(len(piece), rate))
     out[pos : pos + len(piece)] = piece
+    if segments is not None:
+        gain = np.zeros(total)
+        for seg_start, seg_end in segments:
+            a, b = max(0, round(seg_start * rate)), min(total, round(seg_end * rate))
+            if b > a:
+                gain[a:b] = np.maximum(gain[a:b], _faded_ones(b - a, rate))
+        out = _apply_gain(out, gain)
     wavfile.write(dst, rate, out)
     return dst
