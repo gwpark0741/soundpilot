@@ -2,6 +2,7 @@ import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSPropertie
 import Icon, { STATUS_ICON } from "./Icon";
 import type { ObjectLane } from "../lib/objects";
 import { clipPeaks, clipPlacement, dragClip, gateGaps, isFullClip, resolveClip, type Clip, type ClipDrag } from "../lib/clip";
+import { GAIN_MAX_PERCENT, GAIN_STEP_PERCENT, gainToPercent, percentToGain } from "../lib/gain";
 import { methodLabel, objectColor, statusView } from "../lib/selection";
 import { dragSpan, drawSpan, minSpanFrames, removeSpan, sortSpans, type Span, type SpanDrag } from "../lib/span";
 import type {
@@ -41,6 +42,9 @@ interface TimelineProps {
   trackBlockedReason?: string | null;
   // Commits one finished clip drag; the timeline keeps showing the dragged clip until it settles.
   onEditClip?: (soundTrackId: string, clip: Clip) => Promise<void> | void;
+  // Volume slider: preview follows the drag, the commit runs once on release (the mix is rebuilt then).
+  onSetTrackGain?: (soundTrackId: string, gain: number) => Promise<void> | void;
+  onPreviewTrackGain?: (soundTrackId: string, gain: number) => void;
   onAddTrack?: () => void;
   // The spans of the new track being drafted, drawn on their own lane below the sound lanes.
   draftSpans?: Span[];
@@ -114,6 +118,8 @@ export default function Timeline({
   editBlockedReason = null,
   trackBlockedReason = null,
   onEditClip,
+  onSetTrackGain,
+  onPreviewTrackGain,
   onAddTrack,
   draftSpans,
   onDraftSpansChange,
@@ -121,6 +127,8 @@ export default function Timeline({
   const [editMode, setEditMode] = useState<EditMode>("spans");
   const [clipDraft, setClipDraft] = useState<{ soundTrackId: string; clip: Clip } | null>(null);
   const clipDragRef = useRef<ActiveClipDrag | null>(null);
+  // The dragged volume (percent) until the saved gain replaces it.
+  const [gainDraft, setGainDraft] = useState<{ soundTrackId: string; percent: number } | null>(null);
   // null = automatic: open while running or before any sound lane exists; the toggle overrides.
   const [objectsOpen, setObjectsOpen] = useState<boolean | null>(null);
   const showObjects = objectsOpen ?? (appRunning || soundTracks.length === 0);
@@ -485,6 +493,25 @@ export default function Timeline({
                   </span>
                 </button>
                 <div className="ctl">
+                  <GainSlider
+                    disabled={!audioTrack || appRunning || !onSetTrackGain}
+                    label={soundTrack.label}
+                    onChange={(percent) => {
+                      setGainDraft({ soundTrackId: id, percent });
+                      onPreviewTrackGain?.(id, percentToGain(percent));
+                    }}
+                    onCommit={async (percent) => {
+                      try {
+                        await onSetTrackGain?.(id, percentToGain(percent));
+                      } catch {
+                        // The caller reports the failure; the slider snaps back to the saved gain.
+                      } finally {
+                        setGainDraft(null);
+                      }
+                    }}
+                    percent={gainDraft?.soundTrackId === id ? gainDraft.percent : gainToPercent(soundTrack.gain)}
+                    title={noAudioTitle}
+                  />
                   <button
                     aria-label={`Play ${soundTrack.label}`}
                     className="btn sm ico"
@@ -537,6 +564,7 @@ export default function Timeline({
                     onPointerMove={moveClipDrag}
                     onPointerUp={() => void endClipDrag(true)}
                     onPointerCancel={() => void endClipDrag(false)}
+                    gain={percentToGain(gainDraft?.soundTrackId === id ? gainDraft.percent : gainToPercent(soundTrack.gain))}
                     timelineSec={timelineSec}
                   />
                 ) : editMode === "audio" ? (
@@ -677,6 +705,8 @@ interface ClipBlockProps {
   audioTrack: AudioTrackArtifact;
   clip: Clip;
   timelineSec: number;
+  // Scales the drawn waveform (the track's volume).
+  gain: number;
   // Edit-audio mode: the clip is a draggable block; otherwise it is only the lane's background waveform.
   interactive: boolean;
   editable: boolean;
@@ -687,13 +717,13 @@ interface ClipBlockProps {
 }
 
 // The track's audio as placed on the timeline: the raw peaks cut to the clip, drawn where it plays.
-function ClipBlock({ audioTrack, clip, timelineSec, interactive, editable, ...handlers }: ClipBlockProps) {
+function ClipBlock({ audioTrack, clip, timelineSec, gain, interactive, editable, ...handlers }: ClipBlockProps) {
   const place = clipPlacement(clip, timelineSec);
   const style = { left: `${place.left}%`, width: `${place.width}%` };
   // Stable while the clip and the stem are, so Waveform is not rebuilt at video frame rate.
   const peaks = useMemo(
-    () => clipPeaks(audioTrack.waveform_peaks, clip, audioTrack.duration_sec),
-    [audioTrack.waveform_peaks, audioTrack.duration_sec, clip.start, clip.end],
+    () => clipPeaks(audioTrack.waveform_peaks, clip, audioTrack.duration_sec).map((peak) => peak * gain),
+    [audioTrack.waveform_peaks, audioTrack.duration_sec, clip.start, clip.end, gain],
   );
   const wave = <Waveform peaks={peaks} />;
   if (!interactive) {
@@ -724,6 +754,55 @@ function ClipBlock({ audioTrack, clip, timelineSec, interactive, editable, ...ha
         </>
       ) : null}
     </div>
+  );
+}
+
+interface GainSliderProps {
+  label: string;
+  percent: number;
+  disabled: boolean;
+  title?: string;
+  onChange: (percent: number) => void;
+  onCommit: (percent: number) => void;
+}
+
+// 0-400 % volume. `input` follows the drag; the native `change` (release, or a key press) commits once.
+function GainSlider({ label, percent, disabled, title, onChange, onCommit }: GainSliderProps) {
+  const ref = useRef<HTMLInputElement>(null);
+  const commitRef = useRef(onCommit);
+  commitRef.current = onCommit;
+  useEffect(() => {
+    const input = ref.current;
+    if (!input) {
+      return;
+    }
+    const commit = () => commitRef.current(Number(input.value));
+    input.addEventListener("change", commit);
+    return () => input.removeEventListener("change", commit);
+  }, []);
+  return (
+    <span className="gain" title={title}>
+      <input
+        aria-label={`${label} volume`}
+        disabled={disabled}
+        max={GAIN_MAX_PERCENT}
+        min={0}
+        onChange={(event) => onChange(Number(event.target.value))}
+        onClick={(event) => event.stopPropagation()} // the lane would otherwise select this track
+        onDoubleClick={() => {
+          if (percent !== 100) {
+            onChange(100);
+            onCommit(100);
+          }
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+        ref={ref}
+        step={GAIN_STEP_PERCENT}
+        type="range"
+        value={percent}
+      />
+      <output>{percent}%</output>
+    </span>
   );
 }
 

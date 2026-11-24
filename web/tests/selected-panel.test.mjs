@@ -186,7 +186,9 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   assert.equal(mainLabel("t2a", "separate", false), "Separate");
   assert.equal(initialDescription(track({ generation_model: "t2a", description: "" }), undefined, evs), "Earliest");
   assert.equal(initialDescription(track({ generation_model: "t2a", description: "Own" }), undefined, evs), "Own");
-  assert.equal(initialDescription(track({ generation_model: "selsync", description: "" }), undefined, evs), "");
+  assert.equal(initialDescription(track({ generation_model: "selsync", description: "" }), undefined, evs), "Earliest");
+  assert.equal(initialDescription(track({ generation_model: "selsync", description: "Own" }), { description: "" }, evs), "Own");
+  assert.equal(initialDescription(track({ generation_model: "separate", description: "" }), undefined, evs), "");
 
   // event-level track, SelSync picked: no span rows, track description from the earliest span, timing note
   const ev = { track: track({ generation_model: "t2a", description: "" }), artifact: undefined, events: evs };

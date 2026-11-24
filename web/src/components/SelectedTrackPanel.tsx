@@ -60,14 +60,15 @@ export function mainLabel(current: ModelChoice, selected: ModelChoice, pendingSp
   return selected === "separate" ? "Re-separate" : "Regenerate track";
 }
 
-// What the track description box starts with: the stored description, else (event-level tracks) the earliest span's.
+// What the track description box starts with: the stored description (an empty artifact description does not
+// hide the track's), else the earliest span's, so a SelSync track never shows an empty prompt.
 export function initialDescription(
   track: Pick<SoundTrack, "description" | "generation_model">,
   artifact: AudioTrackArtifact | undefined,
   events: SoundEvent[],
 ): string {
-  const stored = artifact?.description ?? track.description ?? "";
-  if (stored || track.generation_model === "selsync" || track.generation_model === "separate") return stored;
+  const stored = artifact?.description || track.description || "";
+  if (stored || track.generation_model === "separate") return stored;
   return [...events].sort((a, b) => a.start_frame_index - b.start_frame_index)[0]?.description ?? "";
 }
 
@@ -152,7 +153,7 @@ export default function SelectedTrackPanel({
   );
   const currentEventLevel = EVENT_LEVEL.includes(current);
   const eventSelected = EVENT_LEVEL.includes(selected);
-  const stored = artifact?.description ?? track.description ?? "";
+  const stored = artifact?.description || track.description || "";
   const original = initialDescription(track, artifact, events);
   const [edited, setEdited] = useState<string | null>(null);
   const description = edited ?? original;

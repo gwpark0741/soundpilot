@@ -32,6 +32,9 @@ class _FakeClip:
     def with_effects(self, *_args):
         return self
 
+    def transform(self, *_args, **_kwargs):
+        return self
+
     def with_audio(self, audio):
         self.audio = audio
         return self

@@ -118,7 +118,7 @@ def mix_audio_into_video(
             return None
 
         # 오디오 합성
-        final_audio = CompositeAudioClip(audio_clips)
+        final_audio = CompositeAudioClip(audio_clips).transform(_soft_limit)
         if (
             final_audio.duration is not None
             and video.duration is not None
@@ -299,6 +299,25 @@ def mix_audio_items_to_wav(
         for clip in audio_clips:
             if hasattr(clip, "close"):
                 clip.close()
+
+
+_LIMIT_KNEE = 0.9
+
+
+def _soft_limit(get_frame, t):
+    """Peak limiter: unchanged up to the knee, tanh-compressed toward 1.0 above it.
+
+    Track gain up to 4x can push the summed mix past full scale, which would hard-clip.
+    """
+    import numpy as np
+
+    frame = np.asarray(get_frame(t), dtype=float)
+    over = np.abs(frame) > _LIMIT_KNEE
+    room = 1.0 - _LIMIT_KNEE
+    squeezed = np.sign(frame) * (
+        _LIMIT_KNEE + room * np.tanh((np.abs(frame) - _LIMIT_KNEE) / room)
+    )
+    return np.where(over, squeezed, frame)
 
 
 # ── Pan 효과 ──────────────────────────────────────────────────────────────────

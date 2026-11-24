@@ -9,6 +9,7 @@ import Stage from "./Stage";
 import TopBar from "./TopBar";
 import { fetchAssetForExport, fetchTrackingWindow, type NewTrack } from "../api";
 import { isFullClip, type Clip } from "../lib/clip";
+import { gainToElementVolume } from "../lib/gain";
 import { newTrackSpan } from "../lib/newTrack";
 import { removeSpan, type Span } from "../lib/span";
 import {
@@ -58,6 +59,7 @@ interface VideoEditorProps {
   onSetAudioMode?: (mode: "generate" | "separate") => Promise<void> | void;
   onSetResidual?: (enabled: boolean) => Promise<void> | void;
   onSetTrackClip?: (trackId: string, clip: Clip) => Promise<void> | void;
+  onSetTrackGain?: (trackId: string, gain: number) => Promise<void> | void;
   // Keeps the track's audio only inside its span boxes; the events are the track's pending span edits.
   onTrimTrack?: (trackId: string, events?: EventSpan[]) => Promise<void> | void;
   onUndoTrim?: (trackId: string) => Promise<void> | void;
@@ -98,6 +100,7 @@ export default function VideoEditor({
   onSetAudioMode,
   onSetResidual,
   onSetTrackClip,
+  onSetTrackGain,
   onTrimTrack,
   onUndoTrim,
   onDeleteTrack,
@@ -474,8 +477,24 @@ export default function VideoEditor({
     void audio.play().catch(onPlayError);
   }
 
+  // Play/Solo run the raw stem, so the track's gain is applied to the element (capped at 1 by the browser).
+  function playTrackSynced(soundTrackId: string, audioStartTime: number, videoStartFrame: number) {
+    const url = trackAudioUrl(soundTrackId);
+    const gain = soundTracks.find((t) => t.sound_track_id === soundTrackId)?.gain;
+    preloadAudio(url).volume = gainToElementVolume(gain);
+    playSyncedAudio(url, audioStartTime, videoStartFrame);
+  }
+
   function playTrackAudio(soundTrackId: string, startFrame: number) {
-    playSyncedAudio(trackAudioUrl(soundTrackId), startFrame / fps, startFrame);
+    playTrackSynced(soundTrackId, startFrame / fps, startFrame);
+  }
+
+  // Slider drag: the cached element (possibly playing right now) follows the slider before the mix is rebuilt.
+  function previewTrackGain(soundTrackId: string, gain: number) {
+    const audio = audioCacheRef.current.get(trackAudioUrl(soundTrackId));
+    if (audio) {
+      audio.volume = gainToElementVolume(gain);
+    }
   }
 
   // Panel actions report a failure next to the control; App already put a summary in the top line.
@@ -533,7 +552,7 @@ export default function VideoEditor({
     }
     const currentFrame = clamp(Math.round(video.currentTime * fps), 0, maxFrame);
     if (action === "play-solo" && next) {
-      playSyncedAudio(trackAudioUrl(next), currentFrame / fps, currentFrame);
+      playTrackSynced(next, currentFrame / fps, currentFrame);
     } else {
       stopPreviewAudio(true);
       video.play().catch(() => {});
@@ -551,7 +570,7 @@ export default function VideoEditor({
     } else if (action === "pause-video") {
       video?.pause();
     } else if (action === "play-solo" && soloTrackId) {
-      playSyncedAudio(trackAudioUrl(soloTrackId), selectedFrame / fps, selectedFrame);
+      playTrackSynced(soloTrackId, selectedFrame / fps, selectedFrame);
     } else if (video) {
       stopPreviewAudio(true);
       video.play().catch(() => {});
@@ -676,6 +695,34 @@ export default function VideoEditor({
                       clip_offset_sec: full ? 0 : clip.offset,
                     }
                   : track,
+              ),
+            },
+          }
+        : current,
+    );
+  }
+
+  // Slider release: the draft shows the new gain until the saved asset replaces it, like a clip edit.
+  async function commitGain(trackId: string, gain: number) {
+    if (!onSetTrackGain || regenerateBlockedReason(hasTimelineEdits, state.status, state.stage)) {
+      return;
+    }
+    setPanelError(null);
+    try {
+      await onSetTrackGain(trackId, gain);
+    } catch (error) {
+      previewTrackGain(trackId, soundTracks.find((t) => t.sound_track_id === trackId)?.gain ?? 1);
+      setPanelError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    setDraftAsset((current) =>
+      current?.sound_timeline
+        ? {
+            ...current,
+            sound_timeline: {
+              ...current.sound_timeline,
+              sound_tracks: current.sound_timeline.sound_tracks.map((track) =>
+                track.sound_track_id === trackId ? { ...track, gain } : track,
               ),
             },
           }
@@ -865,6 +912,8 @@ export default function VideoEditor({
           editBlockedReason={editBlockedReason}
           trackBlockedReason={trackBlockedReason}
           onEditClip={commitClip}
+          onSetTrackGain={onSetTrackGain ? commitGain : undefined}
+          onPreviewTrackGain={previewTrackGain}
           onAddTrack={
             onCreateTrack && draftAsset?.sound_timeline && !draftSpans
               ? () => setDraftSpans([newTrackSpan(selectedFrame, timelineFrameCount, fps)])

@@ -119,6 +119,10 @@ h1, h2, h3, p { margin: 0; }
 .ctl .btn.ico { padding: 0; }
 .ctl .btn.tog[aria-pressed="true"] { color: #101114; font-weight: 600; }
 .ctl .btn:disabled { color: #8a93a3; }
+.ctl { align-items: center; }
+.gain { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.gain input { width: clamp(44px, 5vw, 72px); min-width: 0; margin: 0; }
+.gain output { min-width: 3.2ch; font-size: 0.6875rem; color: var(--muted); font-variant-numeric: tabular-nums; text-align: end; }
 .badge { display: inline-flex; align-items: center; min-height: 18px; padding: 0 6px; border-radius: var(--r-ctl); font-size: 0.75rem; line-height: 1.25; font-weight: 500; border: 1px solid; white-space: nowrap; }
 .badge-sep { background: transparent; color: #aab4c6; border-color: #3a4152; }
 .badge-gen { background: transparent; color: #b9aee6; border-color: #4a4268; }

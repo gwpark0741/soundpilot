@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from v2a_inspect.media_utils import probe_prepared_video
 from v2a_inspect.audio_generation.routing import route_tracks
@@ -57,6 +57,7 @@ from .track_edit import (
     NewTrackModel,
     add_track,
     set_clip,
+    set_gain,
     set_event_spans,
     set_trim,
 )
@@ -68,6 +69,10 @@ DEFAULT_SCENE_THRESHOLD = float(os.getenv("V2A_INSPECT_UI_SCENE_THRESHOLD", "27.
 DEFAULT_MAX_KEYFRAMES_PER_SCENE = int(
     os.getenv("V2A_INSPECT_UI_MAX_KEYFRAMES_PER_SCENE", "20")
 )
+
+
+class GainBody(BaseModel):
+    gain: float = Field(ge=0.0, le=4.0)
 
 
 class ClipBody(BaseModel):
@@ -337,6 +342,28 @@ def create_router(store: VideoAssetStore) -> APIRouter:
                 "offset": track.clip_offset_sec,
             },
         }
+
+    @router.post("/api/audio/tracks/{sound_track_id}/gain")
+    async def set_audio_track_gain(
+        sound_track_id: str,
+        body: GainBody,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        asset = snapshot.asset
+        if asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        try:
+            updated = set_gain(asset, _track_uuid(sound_track_id), body.gain)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        background_tasks.add_task(run_track_clip_pipeline, updated, store)
+        await store.publish_asset_mutation(updated, stage="queued track audio edit")
+        return {"status": "queued", "gain": body.gain}
 
     @router.post("/api/audio/tracks/{sound_track_id}/trim-to-spans")
     async def trim_audio_track_to_spans(

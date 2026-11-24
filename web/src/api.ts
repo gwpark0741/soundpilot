@@ -218,6 +218,18 @@ export async function setTrackClip(trackId: string, clip: Clip): Promise<void> {
   }
 }
 
+export async function setTrackGain(trackId: string, gain: number): Promise<void> {
+  const response = await fetch(`/api/audio/tracks/${trackId}/gain`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ gain }),
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to update track volume: ${response.status}`);
+  }
+}
+
 // Keeps the track's audio only inside its span boxes; `events` are the track's pending span edits.
 export async function trimTrackToSpans(trackId: string, events?: EventSpan[]): Promise<void> {
   const formData = new FormData();
