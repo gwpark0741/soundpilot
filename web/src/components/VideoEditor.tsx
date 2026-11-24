@@ -11,7 +11,15 @@ import { fetchAssetForExport, fetchTrackingWindow, type NewTrack } from "../api"
 import { isFullClip, type Clip } from "../lib/clip";
 import { newTrackSpan } from "../lib/newTrack";
 import { removeSpan, type Span } from "../lib/span";
-import { reapplyPending, trackEventSpans, withoutEvents, type EventSpan, type PendingSpans } from "../lib/pendingEdits";
+import {
+  isRemoved,
+  reapplyPending,
+  removeEvent,
+  trackEventSpans,
+  withoutEvents,
+  type EventSpan,
+  type PendingSpans,
+} from "../lib/pendingEdits";
 import { buildObjects } from "../lib/objects";
 import { trackWindowNeedsFetch } from "../lib/trackWindow";
 import { fallbackMatchLabel, highlightFor, objectColor, reconcileSelection, soloToggleAction, transportAction } from "../lib/selection";
@@ -49,6 +57,9 @@ interface VideoEditorProps {
   onSetAudioMode?: (mode: "generate" | "separate") => Promise<void> | void;
   onSetResidual?: (enabled: boolean) => Promise<void> | void;
   onSetTrackClip?: (trackId: string, clip: Clip) => Promise<void> | void;
+  // Keeps the track's audio only inside its span boxes; the events are the track's pending span edits.
+  onTrimTrack?: (trackId: string, events?: EventSpan[]) => Promise<void> | void;
+  onUndoTrim?: (trackId: string) => Promise<void> | void;
   onDeleteTrack?: (trackId: string) => Promise<void> | void;
   // Adds the track and starts generating its audio.
   onCreateTrack?: (track: NewTrack) => Promise<string | void> | void;
@@ -60,7 +71,7 @@ export function regenerateBlockedReason(
   stage?: string | null,
 ): string | null {
   if (hasTimelineEdits) {
-    return "Span edits are pending. Regenerate the edited tracks or discard the edits first.";
+    return "Edit audio is off while span edits are pending. Apply them with Regenerate with new spans or Trim to spans on the edited track, or discard them.";
   }
   if (status === "running") {
     const progress = stage?.match(/(\d+)\s*(?:\/|of)\s*(\d+)/);
@@ -86,6 +97,8 @@ export default function VideoEditor({
   onSetAudioMode,
   onSetResidual,
   onSetTrackClip,
+  onTrimTrack,
+  onUndoTrim,
   onDeleteTrack,
   onCreateTrack,
 }: VideoEditorProps) {
@@ -547,7 +560,7 @@ export default function VideoEditor({
   // The latest rows live in a ref so the callback below keeps its identity while a drag updates them.
   const timelineRowsRef = useRef(timelineRows);
   timelineRowsRef.current = timelineRows;
-  // Per tick only the rows change; applyTimelineEdits(draftAsset, timelineRows) puts them into the asset at Generate/export.
+  // Per tick only the rows change; applyTimelineEdits(draftAsset, timelineRows, pendingSpans) puts them into the asset at Generate/export.
   const editSoundEventTimestamp = useCallback(
     (soundEventId: string, startFrame: number, endFrame: number) => {
       const nextStart = clamp(startFrame, 0, Math.max(0, maxFrame));
@@ -572,6 +585,17 @@ export default function VideoEditor({
     },
     [maxFrame, timelineFrameCount],
   );
+
+  // Removing a box is a pending edit like a move: the row leaves the timeline, the server drops the event
+  // when the track's edits are applied. The last box of a track stays.
+  const removeSoundEvent = useCallback((soundEventId: string) => {
+    const next = removeEvent(timelineRowsRef.current, pendingSpansRef.current, soundEventId);
+    if (!next) {
+      return;
+    }
+    setTimelineRows((currentRows) => currentRows.filter((row) => row.sound_event_id !== soundEventId));
+    setPendingSpans(next);
+  }, []);
 
   function resetTimestampEdits() {
     setTimelineRows(state.timeline_rows);
@@ -682,7 +706,7 @@ export default function VideoEditor({
       return;
     }
     const committedAsset = draftAsset
-      ? clearGeneratedAudio(applyTimelineEdits(draftAsset, timelineRows))
+      ? clearGeneratedAudio(applyTimelineEdits(draftAsset, timelineRows, pendingSpans))
       : null;
     try {
       await onGenerateAudio(serverUrl, committedAsset);
@@ -700,7 +724,7 @@ export default function VideoEditor({
     if (!draftAsset) {
       return;
     }
-    downloadJson(applyTimelineEdits(draftAsset, timelineRows), "video-asset-edited.json");
+    downloadJson(applyTimelineEdits(draftAsset, timelineRows, pendingSpans), "video-asset-edited.json");
     setPendingSpans({});
   }
 
@@ -736,6 +760,15 @@ export default function VideoEditor({
   async function regenerateSelectedTrack(trackId: string, method: "separate" | "generate", description: string | null) {
     const events = trackEventSpans(timelineRows, pendingSpans, trackId);
     await onRegenerateTrack?.(trackId, method, description, events);
+    if (events.length > 0) {
+      setPendingSpans((pending) => withoutEvents(pending, events));
+    }
+  }
+
+  // Like regenerate, Trim applies this track's pending span edits; the other tracks' edits stay pending.
+  async function trimSelectedTrack(trackId: string) {
+    const events = trackEventSpans(timelineRows, pendingSpans, trackId);
+    await onTrimTrack?.(trackId, events);
     if (events.length > 0) {
       setPendingSpans((pending) => withoutEvents(pending, events));
     }
@@ -811,6 +844,7 @@ export default function VideoEditor({
           frame={selectedFrame}
           frameCount={timelineFrameCount}
           onEditSoundEvent={editSoundEventTimestamp}
+          onRemoveSoundEvent={removeSoundEvent}
           onPlayTrackAudio={playTrackAudio}
           onSelectFrame={selectFrame}
           fps={fps}
@@ -864,11 +898,14 @@ export default function VideoEditor({
               runPanelAction(() => regenerateSelectedTrack(selectedTrack.sound_track_id, method, description))
             }
             onSetResidual={(enabled) => runPanelAction(() => onSetResidual?.(enabled))}
+            onTrim={onTrimTrack ? () => runPanelAction(() => trimSelectedTrack(selectedTrack.sound_track_id)) : undefined}
+            onUndoTrim={onUndoTrim ? () => runPanelAction(() => onUndoTrim(selectedTrack.sound_track_id)) : undefined}
             onDeleteTrack={
               onDeleteTrack ? () => runPanelAction(() => onDeleteTrack(selectedTrack.sound_track_id)) : undefined
             }
             events={(draftAsset?.sound_timeline?.sound_events ?? []).filter(
-              (event) => event.sound_track_id === selectedTrack.sound_track_id,
+              (event) =>
+                event.sound_track_id === selectedTrack.sound_track_id && !isRemoved(pendingSpans, event.sound_event_id),
             )}
             onRegenerateEvent={(id, description, spokenText) =>
               void regenerateEventFromPanel(id, description, spokenText)
@@ -929,7 +966,7 @@ function clearGeneratedAudio(asset: VideoAsset): VideoAsset {
   return nextAsset;
 }
 
-function applyTimelineEdits(asset: VideoAsset, rows: TimelineRow[]): VideoAsset {
+function applyTimelineEdits(asset: VideoAsset, rows: TimelineRow[], pending: PendingSpans): VideoAsset {
   const editedAsset = cloneAsset(asset);
   const editedRows = new Map(
     rows
@@ -940,19 +977,21 @@ function applyTimelineEdits(asset: VideoAsset, rows: TimelineRow[]): VideoAsset 
   if (!timeline) {
     return editedAsset;
   }
-  timeline.sound_events = timeline.sound_events.map((event) => {
-    const row = editedRows.get(event.sound_event_id);
-    if (!row) {
-      return event;
-    }
-    return {
-      ...event,
-      start_frame_index: row.start_frame,
-      end_frame_index: row.end_frame,
-      description: row.label,
-      spoken_text: row.spoken_text ?? event.spoken_text,
-    };
-  });
+  timeline.sound_events = timeline.sound_events
+    .filter((event) => !isRemoved(pending, event.sound_event_id))
+    .map((event) => {
+      const row = editedRows.get(event.sound_event_id);
+      if (!row) {
+        return event;
+      }
+      return {
+        ...event,
+        start_frame_index: row.start_frame,
+        end_frame_index: row.end_frame,
+        description: row.label,
+        spoken_text: row.spoken_text ?? event.spoken_text,
+      };
+    });
   return editedAsset;
 }
 

@@ -25,6 +25,10 @@ interface SelectedTrackPanelProps {
   onDiscardEdits?: () => void;
   onRegenerate: (method: "separate" | "generate", description: string | null) => void;
   onSetResidual: (enabled: boolean) => void;
+  // Keeps the track's audio only inside its span boxes (this track's pending span edits go with it).
+  onTrim?: () => void;
+  // Lifts the trim of a track that has one.
+  onUndoTrim?: () => void;
   // Called once the delete dialog is confirmed.
   onDeleteTrack?: () => void;
   events: SoundEvent[];
@@ -96,6 +100,8 @@ export default function SelectedTrackPanel({
   onDiscardEdits,
   onRegenerate,
   onSetResidual,
+  onTrim,
+  onUndoTrim,
   onDeleteTrack,
   events,
   onRegenerateEvent,
@@ -115,6 +121,7 @@ export default function SelectedTrackPanel({
   // t2a/tts tracks generate one clip per event from the event's own description, so only those are editable.
   const eventLevel = track.generation_model !== "separate" && track.generation_model !== "selsync";
   const blocked = blockedReason !== null;
+  const trimmed = track.clip_segments != null;
   const reason = blockedReason ?? (eventLevel && pendingSpans ? PENDING_SPANS_REASON : null);
   const actionButtons = (
     <div className="actions">
@@ -134,6 +141,28 @@ export default function SelectedTrackPanel({
             : ACTION_LABEL[action]}
         </button>
       ))}
+      {artifact && onTrim && (pendingSpans || !trimmed) ? (
+        <button
+          type="button"
+          className="btn sm"
+          disabled={blocked}
+          aria-describedby={blocked ? whyId : undefined}
+          onClick={onTrim}
+        >
+          Trim to spans
+        </button>
+      ) : null}
+      {artifact && trimmed && onUndoTrim ? (
+        <button
+          type="button"
+          className="btn sm"
+          disabled={blocked}
+          aria-describedby={blocked ? whyId : undefined}
+          onClick={onUndoTrim}
+        >
+          Undo trim
+        </button>
+      ) : null}
       {track.generation_model === "separate" ? (
         <span className="hint">Generates with {generationLabel(track, sourceType)}</span>
       ) : null}

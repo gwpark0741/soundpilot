@@ -1,7 +1,7 @@
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import Icon, { STATUS_ICON } from "./Icon";
 import type { ObjectLane } from "../lib/objects";
-import { clipPeaks, clipPlacement, dragClip, isFullClip, resolveClip, type Clip, type ClipDrag } from "../lib/clip";
+import { clipPeaks, clipPlacement, dragClip, gateGaps, isFullClip, resolveClip, type Clip, type ClipDrag } from "../lib/clip";
 import { methodLabel, objectColor, statusView } from "../lib/selection";
 import { dragSpan, drawSpan, minSpanFrames, removeSpan, sortSpans, type Span, type SpanDrag } from "../lib/span";
 import type {
@@ -25,6 +25,8 @@ interface TimelineProps {
     startFrame: number,
     endFrame: number,
   ) => void;
+  // Marks a span box as removed (a pending edit); the timeline never removes the last box of a track.
+  onRemoveSoundEvent?: (soundEventId: string) => void;
   selectedTrackId: string | null;
   onSelectTrack: (trackId: string) => void;
   soloTrackId: string | null;
@@ -88,6 +90,7 @@ interface ActiveDrag {
 
 const NONE_COLOR = objectColor(-1);
 const NO_AUDIO_REASON = "Generate audio first.";
+const LAST_SPAN_REASON = "A track needs at least one span.";
 
 export default function Timeline({
   rows,
@@ -99,6 +102,7 @@ export default function Timeline({
   onSelectFrame,
   onPlayTrackAudio,
   onEditSoundEvent,
+  onRemoveSoundEvent,
   selectedTrackId,
   onSelectTrack,
   soloTrackId,
@@ -120,6 +124,8 @@ export default function Timeline({
   // null = automatic: open while running or before any sound lane exists; the toggle overrides.
   const [objectsOpen, setObjectsOpen] = useState<boolean | null>(null);
   const showObjects = objectsOpen ?? (appRunning || soundTracks.length === 0);
+  // The span box picked in Edit spans mode; Delete/Backspace or its x button removes it.
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const dragRef = useRef<ActiveDrag | null>(null);
   const draftDragRef = useRef<ActiveDraftDrag | null>(null);
   const audioByTrack = useMemo(
@@ -140,6 +146,31 @@ export default function Timeline({
   // The window listeners are added once; they read the latest props from here.
   const latestRef = useRef({ onEditSoundEvent, onDraftSpansChange, timelineEndFrame, fps });
   latestRef.current = { onEditSoundEvent, onDraftSpansChange, timelineEndFrame, fps };
+
+  // Delete/Backspace removes the picked box, unless the key belongs to a text field.
+  const selectedRow = selectedEventId ? rows.find((row) => row.sound_event_id === selectedEventId) : undefined;
+  const removable = (row: TimelineRow) =>
+    rows.filter((other) => other.sound_event_id && other.sound_track_id === row.sound_track_id).length > 1;
+  useEffect(() => {
+    if (!selectedRow?.sound_event_id || !onRemoveSoundEvent || editMode !== "spans") {
+      return;
+    }
+    const eventId = selectedRow.sound_event_id;
+    const canRemove = removable(selectedRow);
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target;
+      const typing =
+        target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+      if ((event.key === "Delete" || event.key === "Backspace") && !typing && canRemove) {
+        event.preventDefault();
+        onRemoveSoundEvent?.(eventId);
+        setSelectedEventId(null);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRow, onRemoveSoundEvent, editMode, rows]);
 
   useEffect(() => {
     function handlePointerMove(event: globalThis.PointerEvent) {
@@ -294,6 +325,7 @@ export default function Timeline({
     }
     const target = event.target instanceof HTMLElement ? event.target : null;
     const handle = target?.dataset.handle;
+    setSelectedEventId(row.sound_event_id);
     dragRef.current = {
       soundEventId: row.sound_event_id,
       mode:
@@ -510,27 +542,71 @@ export default function Timeline({
                 ) : editMode === "audio" ? (
                   <span className="clip-none">No audio yet</span>
                 ) : null}
+                {gateGaps(soundTrack.clip_segments, timelineSec).map((gap) => (
+                  <span
+                    aria-hidden="true"
+                    className="gate-dim"
+                    key={gap.left}
+                    style={{ left: `${gap.left}%`, width: `${gap.width}%` }}
+                  />
+                ))}
+                {editMode === "audio"
+                  ? laneRows.map((row, index) => {
+                      const bar = barStyle(row, timelineEndFrame);
+                      // Reference only: the span boxes as outlines that let the clip drag through.
+                      return (
+                        <span
+                          aria-hidden="true"
+                          className="ev-ref"
+                          key={row.sound_event_id ?? `${id}-${row.start_frame}-${row.end_frame}-${index}`}
+                          style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
+                        />
+                      );
+                    })
+                  : null}
                 {(editMode === "spans" ? laneRows : []).map((row, index) => {
                   const bar = barStyle(row, timelineEndFrame);
                   const editable = !!row.sound_event_id && !!onEditSoundEvent;
+                  const picked = editable && row.sound_event_id === selectedEventId;
+                  const canRemove = removable(row);
                   return (
-                    <button
-                      aria-label={`Edit ${row.label} event, frames ${row.start_frame} to ${row.end_frame}`}
-                      className="ev"
-                      key={row.sound_event_id ?? `${id}-${row.start_frame}-${row.end_frame}-${index}`}
-                      onPointerDown={editable ? (event) => startSoundEventEdit(event, row) : undefined}
-                      style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
-                      tabIndex={-1}
-                      title={`${row.label}: ${row.start_frame}-${row.end_frame}`}
-                      type="button"
-                    >
-                      {editable ? (
-                        <>
-                          <span aria-hidden="true" className="ev-handle ev-handle-left" data-handle="left" />
-                          <span aria-hidden="true" className="ev-handle ev-handle-right" data-handle="right" />
-                        </>
+                    <Fragment key={row.sound_event_id ?? `${id}-${row.start_frame}-${row.end_frame}-${index}`}>
+                      <button
+                        aria-label={`Edit ${row.label} event, frames ${row.start_frame} to ${row.end_frame}`}
+                        aria-pressed={editable ? picked : undefined}
+                        className={picked ? "ev picked" : "ev"}
+                        onPointerDown={editable ? (event) => startSoundEventEdit(event, row) : undefined}
+                        style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
+                        tabIndex={-1}
+                        title={`${row.label}: ${row.start_frame}-${row.end_frame}`}
+                        type="button"
+                      >
+                        {editable ? (
+                          <>
+                            <span aria-hidden="true" className="ev-handle ev-handle-left" data-handle="left" />
+                            <span aria-hidden="true" className="ev-handle ev-handle-right" data-handle="right" />
+                          </>
+                        ) : null}
+                      </button>
+                      {picked && onRemoveSoundEvent ? (
+                        <button
+                          aria-label="Remove span"
+                          className="ev-remove"
+                          disabled={!canRemove}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onRemoveSoundEvent(row.sound_event_id!);
+                            setSelectedEventId(null);
+                          }}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          style={{ left: `${bar.left + bar.width}%` }}
+                          title={canRemove ? "Remove span (Delete)" : LAST_SPAN_REASON}
+                          type="button"
+                        >
+                          ×
+                        </button>
                       ) : null}
-                    </button>
+                    </Fragment>
                   );
                 })}
                 <span className="playhead" style={{ left: playheadLeft }} />

@@ -47,6 +47,11 @@ test("timeline edit mode, add track and delete track controls", async (context) 
       }),
     );
 
+  // A stored trim gate dims what it silences (here 1 s..4 s of 4 s), in either mode; no gate, no dimming.
+  const gated = timeline({ soundTracks: [{ ...track, clip_segments: [[0, 1]] }] });
+  assert.match(gated, /class="gate-dim" style="left:25%;width:75%"/);
+  assert.doesNotMatch(timeline(), /gate-dim/);
+
   // Default "Edit spans": event boxes stay, the background waveform is the placed clip (2 s..3 s of 4 s).
   let html = timeline({ onEditClip() {}, onAddTrack() {} });
   assert.match(html, /role="radio"[^>]*aria-checked="true"[^>]*>Edit spans|aria-checked="true"[^>]*role="radio"[^>]*>Edit spans/);

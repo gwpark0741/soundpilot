@@ -1292,6 +1292,7 @@ def _with_clip(
         end=end,
         offset=offset,
         video_duration=video_duration,
+        segments=track.clip_segments,
     )
     return artifact.model_copy(update={"clip_path": out})
 

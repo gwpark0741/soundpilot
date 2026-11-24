@@ -148,4 +148,24 @@ test("SelectedTrackPanel renders per-state markup", async (context) => {
   assert.match(m, /<div class="err" role="alert">.*Pipeline is running\./);
   assert.ok(m.indexOf('class="actions"') < m.indexOf('role="alert"'));
   assert.doesNotMatch(html({}), /role="alert"/);
+
+  // Trim to spans / Undo trim only for tracks with audio, by state.
+  const trim = { onTrim() {}, onUndoTrim() {} };
+  m = html({ ...trim });
+  assert.match(m, />Trim to spans</);
+  assert.doesNotMatch(m, /Undo trim/);
+  assert.doesNotMatch(html({}), /Trim to spans/);  // no handler, no button
+  assert.doesNotMatch(html({ ...trim, artifact: undefined }), /Trim to spans/);  // no audio yet
+  m = html({ ...trim, pendingSpans: true });  // pending edits: both ways to apply them
+  assert.match(m, />Regenerate with new spans</);
+  assert.match(m, />Trim to spans</);
+  m = html({ ...trim, track: track({ clip_segments: [[0, 1]] }) });  // trimmed: Undo instead
+  assert.match(m, />Undo trim</);
+  assert.doesNotMatch(m, /Trim to spans/);
+  m = html({ ...trim, track: track({ clip_segments: [[0, 1]] }), pendingSpans: true });
+  assert.match(m, />Trim to spans</);
+  assert.match(m, />Undo trim</);
+  // blocked like the other track actions, with the reason attached
+  m = html({ ...trim, blockedReason: "Generation is running. Actions are unavailable until it finishes." });
+  assert.match(m, /aria-describedby="[^"]+"[^>]*disabled=""[^>]*>Trim to spans<|disabled=""[^>]*aria-describedby="[^"]+"[^>]*>Trim to spans</);
 });

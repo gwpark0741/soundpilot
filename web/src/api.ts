@@ -214,6 +214,27 @@ export async function setTrackClip(trackId: string, clip: Clip): Promise<void> {
   }
 }
 
+// Keeps the track's audio only inside its span boxes; `events` are the track's pending span edits.
+export async function trimTrackToSpans(trackId: string, events?: EventSpan[]): Promise<void> {
+  const formData = new FormData();
+  if (events?.length) {
+    formData.append("events", JSON.stringify(events));
+  }
+  const response = await fetch(`/api/audio/tracks/${trackId}/trim-to-spans`, { method: "POST", body: formData });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to trim the track: ${response.status}`);
+  }
+}
+
+export async function undoTrackTrim(trackId: string): Promise<void> {
+  const response = await fetch(`/api/audio/tracks/${trackId}/trim-to-spans`, { method: "DELETE" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to undo the trim: ${response.status}`);
+  }
+}
+
 export async function deleteTrack(trackId: string): Promise<void> {
   const response = await fetch(`/api/audio/tracks/${trackId}`, { method: "DELETE" });
   if (!response.ok) {

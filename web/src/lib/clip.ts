@@ -41,6 +41,22 @@ export function clipPeaks(peaks: number[], clip: Clip, stemDuration: number): nu
   return peaks.slice(Math.max(0, from), Math.min(peaks.length, Math.max(to, from + 1)));
 }
 
+// The stretches of a `timelineSec` timeline that a trim-to-spans gate silences, in percent of its width.
+export function gateGaps(
+  segments: [number, number][] | null | undefined,
+  timelineSec: number,
+): { left: number; width: number }[] {
+  if (!segments) return [];
+  const total = Math.max(timelineSec, 1e-6);
+  const gaps: { left: number; width: number }[] = [];
+  let from = 0;
+  for (const [start, end] of [...segments, [total, total] as [number, number]]) {
+    if (start > from) gaps.push({ left: (from / total) * 100, width: ((start - from) / total) * 100 });
+    from = Math.max(from, end);
+  }
+  return gaps;
+}
+
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const round = (value: number) => Math.round(value * 1e4) / 1e4;
 

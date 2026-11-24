@@ -62,3 +62,16 @@ test("clip geometry and drag clamping", async (context) => {
   assert.deepEqual(n.newTrackSpan(100, 120, 30), { start_frame: 100, end_frame: 120 });
   assert.deepEqual(n.newTrackSpan(500, 120, 30), { start_frame: 119, end_frame: 120 });
 });
+
+test("gateGaps lists the silenced stretches of a trim-to-spans gate", async (context) => {
+  const server = await createServer({ appType: "custom", optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true } });
+  context.after(() => server.close());
+  const { gateGaps } = await server.ssrLoadModule("/src/lib/clip.ts");
+  assert.deepEqual(gateGaps(null, 4), []);
+  assert.deepEqual(gateGaps([[0, 4]], 4), []);
+  assert.deepEqual(gateGaps([[0.5, 1], [2, 3]], 4), [
+    { left: 0, width: 12.5 },
+    { left: 25, width: 25 },
+    { left: 75, width: 25 },
+  ]);
+});

@@ -14,7 +14,7 @@ test("regenerateBlockedReason blocks unsaved edits and running jobs", async (con
   );
   assert.equal(
     regenerateBlockedReason(true, "complete"),
-    "Span edits are pending. Regenerate the edited tracks or discard the edits first.",
+    "Edit audio is off while span edits are pending. Apply them with Regenerate with new spans or Trim to spans on the edited track, or discard them.",
   );
   assert.equal(
     regenerateBlockedReason(false, "running"),

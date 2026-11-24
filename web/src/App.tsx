@@ -13,6 +13,8 @@ import {
   setAudioMode,
   setResidualEnabled,
   setTrackClip,
+  trimTrackToSpans,
+  undoTrackTrim,
   deleteTrack,
   createTrack,
   type NewTrack,
@@ -210,6 +212,28 @@ export default function App() {
     }
   }
 
+  async function handleTrimTrack(trackId: string, events?: EventSpan[]) {
+    setSubmitError(null);
+    try {
+      await trimTrackToSpans(trackId, events);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError("Could not trim the track.");
+      throw new Error(failure("Could not trim the track.", error, "Try Trim to spans again."));
+    }
+  }
+
+  async function handleUndoTrim(trackId: string) {
+    setSubmitError(null);
+    try {
+      await undoTrackTrim(trackId);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError("Could not undo the trim.");
+      throw new Error(failure("Could not undo the trim.", error, "Try Undo trim again."));
+    }
+  }
+
   async function handleDeleteTrack(trackId: string) {
     setSubmitError(null);
     try {
@@ -256,6 +280,8 @@ export default function App() {
       onSetAudioMode={handleSetAudioMode}
       onSetResidual={handleSetResidual}
       onSetTrackClip={handleSetTrackClip}
+      onTrimTrack={handleTrimTrack}
+      onUndoTrim={handleUndoTrim}
       onDeleteTrack={handleDeleteTrack}
       onCreateTrack={handleCreateTrack}
     />
