@@ -186,7 +186,7 @@ export interface SoundTrack {
   clip_offset_sec?: number;
   // Trim to spans: video seconds [start, end] where the audio is kept (silent elsewhere); null = no gate.
   clip_segments?: [number, number][] | null;
-  // Mix volume 0..2 (1 = unchanged); missing in projects saved before it existed.
+  // Mix volume 0..4 (1 = unchanged); missing in projects saved before it existed.
   gain?: number;
   notes?: string | null;
 }

@@ -307,7 +307,7 @@ _LIMIT_KNEE = 0.9
 def _soft_limit(get_frame, t):
     """Peak limiter: unchanged up to the knee, tanh-compressed toward 1.0 above it.
 
-    Track gain up to 2x can push the summed mix past full scale, which would hard-clip.
+    Track gain up to 4x can push the summed mix past full scale, which would hard-clip.
     """
     import numpy as np
 

@@ -72,7 +72,7 @@ DEFAULT_MAX_KEYFRAMES_PER_SCENE = int(
 
 
 class GainBody(BaseModel):
-    gain: float = Field(ge=0.0, le=2.0)
+    gain: float = Field(ge=0.0, le=4.0)
 
 
 class ClipBody(BaseModel):

@@ -25,15 +25,15 @@ test("track volume slider and gain helpers", async (context) => {
   const g = await server.ssrLoadModule("/src/lib/gain.ts");
   const { default: Timeline } = await server.ssrLoadModule("/src/components/Timeline.tsx");
 
-  // Value -> volume: gain 0..2 is 0..200 %, the media element is capped at 1.
+  // Value -> volume: gain 0..4 is 0..400 %, the media element is capped at 1.
   assert.equal(g.gainToPercent(undefined), 100);
   assert.equal(g.gainToPercent(1.35), 135);
-  assert.equal(g.percentToGain(250), 2);
+  assert.equal(g.percentToGain(450), 4);
   assert.equal(g.percentToGain(-5), 0);
   assert.equal(g.percentToGain(50), 0.5);
   assert.equal(g.gainToElementVolume(undefined), 1);
   assert.equal(g.gainToElementVolume(0.4), 0.4);
-  assert.equal(g.gainToElementVolume(2), 1);
+  assert.equal(g.gainToElementVolume(4), 1);
   assert.equal(g.gainToElementVolume(-1), 0);
 
   const timeline = (over = {}, soundTrack = track, audioTracks = [audio]) =>
@@ -59,7 +59,7 @@ test("track volume slider and gain helpers", async (context) => {
   const slider = (html) => html.match(/<input[^>]*aria-label="Door volume"[^>]*>/)?.[0] ?? "";
 
   let html = timeline({}, { ...track, gain: 1.35 });
-  assert.match(slider(html), /max="200"/);
+  assert.match(slider(html), /max="400"/);
   assert.match(slider(html), /min="0"/);
   assert.match(slider(html), /step="5"/);
   assert.match(slider(html), /type="range"/);

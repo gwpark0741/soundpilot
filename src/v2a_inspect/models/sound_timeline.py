@@ -61,8 +61,8 @@ class SoundTrack(SchemaModel):
     # Trim to spans: video-time [start, end] seconds where the (clipped) audio is kept; the rest is
     # silent. None = no gate. Applied after the clip by render_clip_wav.
     clip_segments: list[tuple[float, float]] | None = None
-    # Mix setting (0..2, 1 = unchanged): applied as the track's volume when the preview is mixed.
-    gain: float = Field(default=1.0, ge=0.0, le=2.0)
+    # Mix setting (0..4, 1 = unchanged): applied as the track's volume when the preview is mixed.
+    gain: float = Field(default=1.0, ge=0.0, le=4.0)
 
     notes: str | None = None
 

@@ -1,5 +1,5 @@
-// Track gain is 0..2 (1 = unchanged); the slider shows it as 0..200 %.
-export const GAIN_MAX_PERCENT = 200;
+// Track gain is 0..4 (1 = unchanged, 4 = about +12 dB); the slider shows it as 0..400 %.
+export const GAIN_MAX_PERCENT = 400;
 export const GAIN_STEP_PERCENT = 5;
 
 export function gainToPercent(gain: number | null | undefined): number {

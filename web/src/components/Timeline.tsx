@@ -766,7 +766,7 @@ interface GainSliderProps {
   onCommit: (percent: number) => void;
 }
 
-// 0-200 % volume. `input` follows the drag; the native `change` (release, or a key press) commits once.
+// 0-400 % volume. `input` follows the drag; the native `change` (release, or a key press) commits once.
 function GainSlider({ label, percent, disabled, title, onChange, onCommit }: GainSliderProps) {
   const ref = useRef<HTMLInputElement>(null);
   const commitRef = useRef(onCommit);

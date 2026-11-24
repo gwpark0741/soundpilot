@@ -106,7 +106,7 @@ def set_clip(
 
 
 def set_gain(asset: VideoAsset, track_id: UUID, gain: float) -> VideoAsset:
-    """Store the track's mix gain (0..2); needs the track's audio, like a clip edit."""
+    """Store the track's mix gain (0..4); needs the track's audio, like a clip edit."""
     track = next(
         (t for t in _timeline(asset).sound_tracks if t.sound_track_id == track_id), None
     )

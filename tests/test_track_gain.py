@@ -29,10 +29,10 @@ class GainModelTest(unittest.TestCase):
     def test_default_validation_and_old_json(self) -> None:
         old = {"track_type": "sfx", "label": "Old", "generation_model": "t2a"}
         self.assertEqual(SoundTrack.model_validate(old).gain, 1.0)
-        for bad in (-0.1, 2.01):
+        for bad in (-0.1, 4.01):
             with self.assertRaises(ValidationError):
                 SoundTrack.model_validate({**old, "gain": bad})
-        self.assertEqual(SoundTrack.model_validate({**old, "gain": 2}).gain, 2.0)
+        self.assertEqual(SoundTrack.model_validate({**old, "gain": 4}).gain, 4.0)
 
     def test_gain_survives_clip_reset_and_edits(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -134,7 +134,7 @@ class GainEndpointTest(unittest.TestCase):
             client, _ = self._client(asset)
             ghost = "/api/audio/tracks/00000000-0000-0000-0000-000000000000/gain"
             self.assertEqual(client.post(ghost, json={"gain": 1}).status_code, 404)
-            for bad in (-0.5, 2.5):
+            for bad in (-0.5, 4.5):
                 self.assertEqual(client.post(url, json={"gain": bad}).status_code, 422)
             bare = asset.model_copy(update={"sound_track_audio_artifacts": []})
             client, _ = self._client(bare)
