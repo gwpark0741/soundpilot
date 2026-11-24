@@ -257,6 +257,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         method: Annotated[Literal["separate", "generate", "selsync"], Form()],
         description: Annotated[str | None, Form()] = None,
         seed: Annotated[int | None, Form()] = None,
+        model: Annotated[Literal["selsync", "t2a", "tts"] | None, Form()] = None,
         events: Annotated[
             str | None, Form()
         ] = None,  # JSON [{sound_event_id, start_frame, end_frame}]
@@ -277,6 +278,10 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             asset = _apply_event_edits(asset, track.sound_track_id, events)
         if method == "selsync":  # old name for "generate"
             method = "generate"
+        if method == "generate" and model == "tts" and track.track_type != "speech":
+            raise HTTPException(
+                status_code=422, detail="Only speech tracks can use TTS."
+            )
         if method == "separate" and not asset.has_audio:
             raise HTTPException(
                 status_code=422,
@@ -290,6 +295,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             method,
             description,
             seed,
+            model if method == "generate" else None,
         )
         await store.publish_asset_mutation(
             asset, stage="queued track audio regeneration"

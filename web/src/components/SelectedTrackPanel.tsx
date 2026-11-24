@@ -1,8 +1,8 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import DeleteTrackDialog from "./DeleteTrackDialog";
 import Icon, { STATUS_ICON } from "./Icon";
 import { trackFailureText } from "../lib/errors";
-import { actionMethod, generationLabel, methodLabel, statusView, trackActions, type TrackAction } from "../lib/selection";
+import { methodLabel, statusView } from "../lib/selection";
 import type { AudioTrackArtifact, SoundEvent, SoundTrack, TrackStatus } from "../types";
 
 interface SelectedTrackPanelProps {
@@ -12,8 +12,6 @@ interface SelectedTrackPanelProps {
   appRunning: boolean;
   blockedReason: string | null;
   hasAudio: boolean;
-  // source_type of the track's sound source; decides what "Generate instead" would use.
-  sourceType?: string;
   residualEnabled: boolean;
   objectColor: string;
   // Failure of the last action started from this panel, shown next to the controls.
@@ -23,7 +21,14 @@ interface SelectedTrackPanelProps {
   // Any unsaved timeline edit (this track's or another's) can be dropped from here.
   hasUnsavedEdits?: boolean;
   onDiscardEdits?: () => void;
-  onRegenerate: (method: "separate" | "generate", description: string | null) => void;
+  // `model` is only set when the Model select differs from the track's current model.
+  // Starts with this model picked (tests; the user normally picks it).
+  initialModel?: ModelChoice;
+  onRegenerate: (
+    method: "separate" | "generate",
+    description: string | null,
+    model?: "selsync" | "t2a" | "tts",
+  ) => void;
   onSetResidual: (enabled: boolean) => void;
   // Keeps the track's audio only inside its span boxes (this track's pending span edits go with it).
   onTrim?: () => void;
@@ -37,11 +42,34 @@ interface SelectedTrackPanelProps {
 
 const STATUS_CLASS = { ok: "done", run: "run", wait: "queue", err: "fail" } as const;
 const PENDING_SPANS_REASON = "Span edits are pending. Regenerate the track to apply them.";
-const ACTION_LABEL: Record<TrackAction, string> = {
-  "re-separate": "Re-separate",
-  "generate-instead": "Generate instead",
-  regenerate: "Regenerate",
+const OTHER_MODEL_REASON = "Per-span regeneration uses the current model. Select it again, or regenerate the whole track.";
+const TIMING_ONLY_NOTE = "Spans are used as timing only; span descriptions are not used.";
+
+export type ModelChoice = "selsync" | "t2a" | "tts" | "separate";
+const EVENT_LEVEL: ModelChoice[] = ["t2a", "tts"];
+const MODEL_LABEL: Record<ModelChoice, string> = {
+  selsync: "SelVA w/ SelSync",
+  t2a: "ElevenLabs",
+  tts: "ElevenLabs TTS",
+  separate: "Separate",
 };
+
+export function mainLabel(current: ModelChoice, selected: ModelChoice, pendingSpans: boolean): string {
+  if (selected !== current) return selected === "separate" ? "Separate" : `Regenerate with ${MODEL_LABEL[selected]}`;
+  if (pendingSpans) return "Regenerate with new spans";
+  return selected === "separate" ? "Re-separate" : "Regenerate track";
+}
+
+// What the track description box starts with: the stored description, else (event-level tracks) the earliest span's.
+export function initialDescription(
+  track: Pick<SoundTrack, "description" | "generation_model">,
+  artifact: AudioTrackArtifact | undefined,
+  events: SoundEvent[],
+): string {
+  const stored = artifact?.description ?? track.description ?? "";
+  if (stored || track.generation_model === "selsync" || track.generation_model === "separate") return stored;
+  return [...events].sort((a, b) => a.start_frame_index - b.start_frame_index)[0]?.description ?? "";
+}
 
 function EventRow({
   event,
@@ -77,7 +105,7 @@ function EventRow({
           aria-describedby={disabled ? describedBy : undefined}
           onClick={() => onRegenerate(event.sound_event_id, description.trim(), isSpeech ? spoken.trim() : null)}
         >
-          Regenerate
+          Regenerate this span
         </button>
       </div>
     </li>
@@ -91,13 +119,13 @@ export default function SelectedTrackPanel({
   appRunning,
   blockedReason,
   hasAudio,
-  sourceType,
   residualEnabled,
   objectColor,
   error = null,
   pendingSpans = false,
   hasUnsavedEdits = false,
   onDiscardEdits,
+  initialModel,
   onRegenerate,
   onSetResidual,
   onTrim,
@@ -108,39 +136,55 @@ export default function SelectedTrackPanel({
 }: SelectedTrackPanelProps) {
   const uid = useId();
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const original = artifact?.description ?? track.description ?? "";
-  const [description, setDescription] = useState(original);
   const view = statusView(status, appRunning);
-  const actions = trackActions(track.generation_model, hasAudio, track.track_type);
+  const current: ModelChoice = track.generation_model === "v2a" ? "selsync" : (track.generation_model as ModelChoice);
+  const [picked, setPicked] = useState<ModelChoice | null>(initialModel ?? null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (mounted.current) setPicked(null);
+    mounted.current = true;
+  }, [current]);
+  const selected = picked ?? current;
+  const options = (["selsync", "t2a", "tts", "separate"] as ModelChoice[]).filter(
+    (model) =>
+      model === current ||
+      (model === "tts" ? track.track_type === "speech" : model === "separate" ? hasAudio : true),
+  );
+  const currentEventLevel = EVENT_LEVEL.includes(current);
+  const eventSelected = EVENT_LEVEL.includes(selected);
+  const stored = artifact?.description ?? track.description ?? "";
+  const original = initialDescription(track, artifact, events);
+  const [edited, setEdited] = useState<string | null>(null);
+  const description = edited ?? original;
   const origin = artifact?.origin ?? (track.generation_model === "separate" ? "separated" : "generated");
   const seedLine =
     origin === "separated"
       ? artifact?.attempt != null ? `Attempt ${artifact.attempt}` : null
       : artifact?.seed != null ? `Seed ${artifact.seed}` : null;
   const whyId = `${uid}-why`;
-  // t2a/tts tracks generate one clip per event from the event's own description, so only those are editable.
-  const eventLevel = track.generation_model !== "separate" && track.generation_model !== "selsync";
   const blocked = blockedReason !== null;
   const trimmed = track.clip_segments != null;
-  const reason = blockedReason ?? (eventLevel && pendingSpans ? PENDING_SPANS_REASON : null);
+  const reason = blockedReason ?? (currentEventLevel && pendingSpans ? PENDING_SPANS_REASON : null);
+  const rowsReason = reason ?? (eventSelected && selected !== current ? OTHER_MODEL_REASON : null);
+  const sameModel = selected === current;
+  const label = mainLabel(current, selected, pendingSpans);
   const actionButtons = (
     <div className="actions">
-      {actions.map((action) => (
-        <button
-          key={action}
-          type="button"
-          className="btn sm"
-          disabled={blocked}
-          aria-describedby={blocked ? whyId : undefined}
-          onClick={() =>
-            onRegenerate(actionMethod(action), eventLevel || description === original ? null : description)
-          }
-        >
-          {pendingSpans && (action === "regenerate" || (action === "re-separate" && track.generation_model === "separate"))
-            ? "Regenerate with new spans"
-            : ACTION_LABEL[action]}
-        </button>
-      ))}
+      <button
+        type="button"
+        className="btn sm"
+        disabled={blocked}
+        aria-describedby={blocked ? whyId : undefined}
+        onClick={() =>
+          onRegenerate(
+            selected === "separate" ? "separate" : "generate",
+            !eventSelected && description.trim() && description !== stored ? description : null,
+            selected !== "separate" && !sameModel ? selected : undefined,
+          )
+        }
+      >
+        {label}
+      </button>
       {artifact && onTrim && (pendingSpans || !trimmed) ? (
         <button
           type="button"
@@ -162,9 +206,6 @@ export default function SelectedTrackPanel({
         >
           Undo trim
         </button>
-      ) : null}
-      {track.generation_model === "separate" ? (
-        <span className="hint">Generates with {generationLabel(track, sourceType)}</span>
       ) : null}
     </div>
   );
@@ -204,7 +245,17 @@ export default function SelectedTrackPanel({
             </div>
           </div>
         ) : null}
-        {eventLevel ? (
+        <div className="desc">
+          <label htmlFor={`${uid}-model`}>Model</label>
+          <select id={`${uid}-model`} value={selected} onChange={(e) => setPicked(e.target.value as ModelChoice)}>
+            {options.map((model) => (
+              <option key={model} value={model}>
+                {MODEL_LABEL[model]}
+              </option>
+            ))}
+          </select>
+        </div>
+        {eventSelected ? (
           <>
             {actionButtons}
             <ul className="events">
@@ -212,7 +263,7 @@ export default function SelectedTrackPanel({
                 <EventRow
                   key={event.sound_event_id}
                   event={event}
-                  disabled={reason !== null}
+                  disabled={rowsReason !== null}
                   describedBy={whyId}
                   onRegenerate={onRegenerateEvent}
                 />
@@ -222,8 +273,9 @@ export default function SelectedTrackPanel({
         ) : (
           <>
             <div className="desc">
-              <label htmlFor={`${uid}-desc`}>Description</label>
-              <textarea id={`${uid}-desc`} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+              <label htmlFor={`${uid}-desc`}>{selected === "selsync" && currentEventLevel ? "Track description" : "Description"}</label>
+              <textarea id={`${uid}-desc`} rows={2} value={description} onChange={(e) => setEdited(e.target.value)} />
+              {selected === "selsync" && currentEventLevel ? <p className="hint">{TIMING_ONLY_NOTE}</p> : null}
             </div>
             {actionButtons}
           </>
@@ -234,10 +286,10 @@ export default function SelectedTrackPanel({
             <div>{error}</div>
           </div>
         ) : null}
-        {reason ? (
+        {rowsReason ? (
           <p className="reason" id={whyId}>
             <Icon name="info" />
-            {reason}
+            {rowsReason}
           </p>
         ) : null}
         {onDeleteTrack ? (

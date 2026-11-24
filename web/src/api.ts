@@ -157,9 +157,13 @@ export async function regenerateTrackAudio(
   description?: string,
   seed?: number,
   events?: EventSpan[],
+  model?: "selsync" | "t2a" | "tts",
 ): Promise<void> {
   const formData = new FormData();
   formData.append("method", method);
+  if (model) {
+    formData.append("model", model);
+  }
   if (description) {
     formData.append("description", description);
   }

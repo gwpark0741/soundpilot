@@ -66,7 +66,7 @@ from v2a_inspect.preprocessing import (
 )
 
 from .store import VideoAssetStore
-from .track_edit import delete_track, reset_clips
+from .track_edit import _AGENT_MODEL, delete_track, reset_clips
 
 
 @dataclass(frozen=True)
@@ -659,6 +659,7 @@ async def run_track_regeneration_pipeline(
     method: Literal["separate", "generate"],
     description: str | None,
     seed: int | None,
+    model: Literal["selsync", "t2a", "tts"] | None = None,
 ) -> None:
     try:
         timeline = video_asset.sound_timeline
@@ -676,17 +677,20 @@ async def run_track_regeneration_pipeline(
             raise ValueError("Sound track not found.")
         track_id = track.sound_track_id
 
-        original_model = track.generation_model
+        original_model, original_agent = track.generation_model, track.agent_model
         track = backfill_agent_model(track)
-        # "generate" follows the agent's routing for this one track.
+        # "generate" follows the agent's routing for this one track unless the user picked a model.
         route = (
             "separate"
             if method == "separate"
-            else generation_route(
+            else model
+            or generation_route(
                 track, {s.sound_source_id: s for s in timeline.sound_sources}
             )
         )
         update: dict[str, object] = {"generation_model": route}
+        if method == "generate" and model:
+            update["agent_model"] = _AGENT_MODEL[model]
         if description and description.strip():
             update["description"] = description.strip()
         track = track.model_copy(update=update)
@@ -735,7 +739,12 @@ async def run_track_regeneration_pipeline(
                 )
         except Exception as exc:  # noqa: BLE001 - keep previous audio, surface error.
             # Failed switch: keep the edited description but restore the model.
-            restored = track.model_copy(update={"generation_model": original_model})
+            restored = track.model_copy(
+                update={
+                    "generation_model": original_model,
+                    "agent_model": original_agent,
+                }
+            )
             video_asset = video_asset.model_copy(
                 update={
                     "sound_timeline": timeline.model_copy(

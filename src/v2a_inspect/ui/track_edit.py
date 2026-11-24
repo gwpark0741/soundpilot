@@ -15,7 +15,11 @@ from v2a_inspect.models import (
 )
 
 NewTrackModel = Literal["selsync", "t2a", "tts", "separate"]
-_AGENT_MODEL: dict[str, Literal["t2a", "v2a", "tts"]] = {"selsync": "v2a", "tts": "tts"}
+_AGENT_MODEL: dict[str, Literal["t2a", "v2a", "tts"]] = {
+    "selsync": "v2a",
+    "t2a": "t2a",
+    "tts": "tts",
+}
 
 
 def _timeline(asset: VideoAsset) -> SoundTimeline:

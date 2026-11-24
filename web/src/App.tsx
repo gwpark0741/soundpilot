@@ -165,10 +165,11 @@ export default function App() {
     method: "separate" | "generate",
     description: string | null,
     events?: EventSpan[],
+    model?: "selsync" | "t2a" | "tts",
   ) {
     setSubmitError(null);
     try {
-      await regenerateTrackAudio(trackId, method, description ?? undefined, undefined, events);
+      await regenerateTrackAudio(trackId, method, description ?? undefined, undefined, events, model);
       await refreshAssetSummary();
     } catch (error) {
       // Top line: short summary. The full message goes next to the failed control.

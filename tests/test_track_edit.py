@@ -5,7 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import numpy as np
@@ -667,6 +667,113 @@ class TrackEditPipelineTest(unittest.TestCase):
             self.assertIsNone(by_track[door.sound_track_id].clip_path)
             self.assertIsNotNone(by_track[wind.sound_track_id].clip_path)
 
+    def _event_level(self, root: Path):
+        """Door as an event-level (t2a) track with one event artifact and no stem."""
+        asset, (door, wind) = _asset(root)
+        timeline = asset.sound_timeline
+        tracks = [
+            t.model_copy(update={"generation_model": "t2a", "agent_model": "t2a"})
+            if t.sound_track_id == door.sound_track_id
+            else t
+            for t in timeline.sound_tracks
+        ]
+        event = timeline.sound_events[0]
+        art = SoundEventAudioArtifact(
+            sound_event_id=event.sound_event_id,
+            sound_track_id=door.sound_track_id,
+            path=_ramp(root / "door-event.wav", 1),
+            duration_sec=1.0,
+            generation_model="t2a",
+            description="Door event",
+        )
+        asset = asset.model_copy(
+            update={
+                "sound_timeline": timeline.model_copy(update={"sound_tracks": tracks}),
+                "sound_event_audio_artifacts": [art],
+                "sound_track_audio_artifacts": [
+                    a for a in asset.sound_track_audio_artifacts if a.sound_track_id != door.sound_track_id
+                ],
+            }
+        )
+        return asset, door, art
+
+    def test_model_pick_switches_event_level_to_selsync_and_drops_event_clips(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, door, art = self._event_level(Path(temp_dir))
+            store = VideoAssetStore()
+            with (
+                patch("v2a_inspect.ui.pipeline.generate_track", side_effect=_fake_stem),
+                patch("v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix),
+            ):
+                asyncio.run(
+                    run_track_regeneration_pipeline(
+                        asset, store, str(door.sound_track_id), "generate", "new text", 5, "selsync"
+                    )
+                )
+            snap = asyncio.run(store.snapshot())
+            self.assertEqual(snap.status, "complete")
+            track = snap.asset.sound_timeline.sound_tracks[0]
+            self.assertEqual((track.generation_model, track.agent_model), ("selsync", "v2a"))
+            self.assertEqual(track.description, "new text")
+            self.assertEqual(snap.asset.sound_event_audio_artifacts, [])
+            stem = next(a for a in snap.asset.sound_track_audio_artifacts if a.sound_track_id == door.sound_track_id)
+            self.assertEqual(stem.origin, "generated")
+
+    def test_model_pick_switches_selsync_to_event_level_and_replaces_the_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            asset, (door, _) = _asset(root)
+            event = asset.sound_timeline.sound_events[0]
+            art = SoundEventAudioArtifact(
+                sound_event_id=event.sound_event_id,
+                sound_track_id=door.sound_track_id,
+                path=_ramp(root / "new-event.wav", 1),
+                duration_sec=1.0,
+                generation_model="t2a",
+                description="Door event",
+            )
+            store = VideoAssetStore()
+            with (
+                patch(
+                    "v2a_inspect.ui.pipeline._generate_track_event_artifacts",
+                    new=AsyncMock(return_value=[art]),
+                ) as gen,
+                patch("v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix),
+            ):
+                asyncio.run(
+                    run_track_regeneration_pipeline(
+                        asset, store, str(door.sound_track_id), "generate", None, 5, "t2a"
+                    )
+                )
+            snap = asyncio.run(store.snapshot())
+            gen.assert_awaited_once()
+            self.assertEqual(snap.status, "complete")
+            track = snap.asset.sound_timeline.sound_tracks[0]
+            self.assertEqual((track.generation_model, track.agent_model), ("t2a", "t2a"))
+            self.assertEqual([a.sound_event_id for a in snap.asset.sound_event_audio_artifacts], [event.sound_event_id])
+            door_stems = [a for a in snap.asset.sound_track_audio_artifacts if a.sound_track_id == door.sound_track_id]
+            self.assertTrue(door_stems and all(a.origin == "mixed" for a in door_stems))
+
+    def test_failed_model_switch_keeps_the_previous_model_and_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, door, art = self._event_level(Path(temp_dir))
+            store = VideoAssetStore()
+            with (
+                patch("v2a_inspect.ui.pipeline.generate_track", side_effect=RuntimeError("boom")),
+                patch("v2a_inspect.ui.pipeline.mix_audio_into_video", side_effect=_fake_mix),
+            ):
+                asyncio.run(
+                    run_track_regeneration_pipeline(
+                        asset, store, str(door.sound_track_id), "generate", None, 5, "selsync"
+                    )
+                )
+            snap = asyncio.run(store.snapshot())
+            self.assertEqual(snap.status, "failed")
+            track = snap.asset.sound_timeline.sound_tracks[0]
+            self.assertEqual((track.generation_model, track.agent_model), ("t2a", "t2a"))
+            self.assertEqual(snap.asset.sound_event_audio_artifacts, [art])
+            self.assertEqual(snap.asset.track_status[door.sound_track_id].state, "failed")
+
     def test_silent_selsync_regeneration_keeps_the_audio_and_flags_the_track(self) -> None:
         def silent_stem(*args) -> Path:
             wavfile.write(args[-1], RATE, np.zeros(4 * RATE, dtype=np.int16))
@@ -933,6 +1040,21 @@ class TrackEditRouteTest(unittest.TestCase):
             with patch("v2a_inspect.ui.routes.run_track_regeneration_pipeline") as pipeline:
                 response = client.post(url, data={"method": "generate", "events": json.dumps(both)})
             self.assertEqual(response.status_code, 400)
+            pipeline.assert_not_called()
+
+    def test_regenerate_route_passes_the_model_and_rejects_tts_for_non_speech(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            asset, (door, _) = _asset(Path(temp_dir))
+            url = f"/api/audio/tracks/{door.sound_track_id}/regenerate"
+            client, _ = self._client(asset)
+            with patch("v2a_inspect.ui.routes.run_track_regeneration_pipeline") as pipeline:
+                response = client.post(url, data={"method": "generate", "model": "t2a"})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(pipeline.call_args.args[-1], "t2a")
+            client, _ = self._client(asset)
+            with patch("v2a_inspect.ui.routes.run_track_regeneration_pipeline") as pipeline:
+                self.assertEqual(client.post(url, data={"method": "generate", "model": "tts"}).status_code, 422)
+                self.assertEqual(client.post(url, data={"method": "generate", "model": "nope"}).status_code, 422)
             pipeline.assert_not_called()
 
     def test_create_route_adds_the_track_and_stays_idle(self) -> None:

@@ -103,7 +103,7 @@ class TrackRouteTest(unittest.TestCase):
             self.assertEqual(response.json(), {"status": "queued"})
             args = pipeline.call_args.args
             self.assertEqual(args[1], store)
-            self.assertEqual(args[2:], (str(track.sound_track_id), "generate", "creak", 7))
+            self.assertEqual(args[2:], (str(track.sound_track_id), "generate", "creak", 7, None))
 
             client, _ = self._client(asset)  # the first request left the store running
             with patch(

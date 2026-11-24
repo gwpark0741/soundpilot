@@ -53,6 +53,7 @@ interface VideoEditorProps {
     method: "separate" | "generate",
     description: string | null,
     events?: EventSpan[],
+    model?: "selsync" | "t2a" | "tts",
   ) => Promise<void> | void;
   onSetAudioMode?: (mode: "generate" | "separate") => Promise<void> | void;
   onSetResidual?: (enabled: boolean) => Promise<void> | void;
@@ -757,9 +758,14 @@ export default function VideoEditor({
   const trackBlockedReason = regenerateBlockedReason(false, state.status, state.stage);
 
   // The selected track's edited spans go with its regenerate; the other tracks' edits stay pending.
-  async function regenerateSelectedTrack(trackId: string, method: "separate" | "generate", description: string | null) {
+  async function regenerateSelectedTrack(
+    trackId: string,
+    method: "separate" | "generate",
+    description: string | null,
+    model?: "selsync" | "t2a" | "tts",
+  ) {
     const events = trackEventSpans(timelineRows, pendingSpans, trackId);
-    await onRegenerateTrack?.(trackId, method, description, events);
+    await onRegenerateTrack?.(trackId, method, description, events, model);
     if (events.length > 0) {
       setPendingSpans((pending) => withoutEvents(pending, events));
     }
@@ -887,15 +893,14 @@ export default function VideoEditor({
             appRunning={state.status === "running"}
             blockedReason={trackBlockedReason}
             hasAudio={baseAsset?.has_audio ?? false}
-            sourceType={soundSources?.find((source) => source.sound_source_id === selectedTrack.sound_source_id)?.source_type}
             residualEnabled={baseAsset?.residual_enabled ?? false}
             objectColor={highlightColor}
             error={panelError}
             pendingSpans={trackEventSpans(timelineRows, pendingSpans, selectedTrack.sound_track_id).length > 0}
             hasUnsavedEdits={hasTimelineEdits}
             onDiscardEdits={resetTimestampEdits}
-            onRegenerate={(method, description) =>
-              runPanelAction(() => regenerateSelectedTrack(selectedTrack.sound_track_id, method, description))
+            onRegenerate={(method, description, model) =>
+              runPanelAction(() => regenerateSelectedTrack(selectedTrack.sound_track_id, method, description, model))
             }
             onSetResidual={(enabled) => runPanelAction(() => onSetResidual?.(enabled))}
             onTrim={onTrimTrack ? () => runPanelAction(() => trimSelectedTrack(selectedTrack.sound_track_id)) : undefined}
