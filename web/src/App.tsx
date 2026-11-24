@@ -13,6 +13,7 @@ import {
   setAudioMode,
   setResidualEnabled,
   setTrackClip,
+  setTrackGain,
   trimTrackToSpans,
   undoTrackTrim,
   deleteTrack,
@@ -213,6 +214,17 @@ export default function App() {
     }
   }
 
+  async function handleSetTrackGain(trackId: string, gain: number) {
+    setSubmitError(null);
+    try {
+      await setTrackGain(trackId, gain);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError("Could not update the track volume.");
+      throw new Error(failure("Could not update the track volume.", error, "Try the volume again."));
+    }
+  }
+
   async function handleTrimTrack(trackId: string, events?: EventSpan[]) {
     setSubmitError(null);
     try {
@@ -281,6 +293,7 @@ export default function App() {
       onSetAudioMode={handleSetAudioMode}
       onSetResidual={handleSetResidual}
       onSetTrackClip={handleSetTrackClip}
+      onSetTrackGain={handleSetTrackGain}
       onTrimTrack={handleTrimTrack}
       onUndoTrim={handleUndoTrim}
       onDeleteTrack={handleDeleteTrack}

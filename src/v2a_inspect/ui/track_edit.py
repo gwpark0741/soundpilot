@@ -105,6 +105,18 @@ def set_clip(
     )
 
 
+def set_gain(asset: VideoAsset, track_id: UUID, gain: float) -> VideoAsset:
+    """Store the track's mix gain (0..2); needs the track's audio, like a clip edit."""
+    track = next(
+        (t for t in _timeline(asset).sound_tracks if t.sound_track_id == track_id), None
+    )
+    if track is None:
+        raise LookupError("Sound track not found.")
+    if not any(a.sound_track_id == track_id for a in asset.sound_track_audio_artifacts):
+        raise ValueError("The track has no audio yet.")
+    return _replace_track(asset, track.model_copy(update={"gain": gain}))
+
+
 def delete_track(asset: VideoAsset, track_id: UUID) -> VideoAsset:
     """Remove the track with its events, orphaned source, audio artifacts and status."""
     timeline = _timeline(asset)

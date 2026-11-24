@@ -1241,7 +1241,7 @@ async def _rebuild_audio_outputs(
                 type=artifact.track_type,
                 time=(0.0, video_duration),
                 description=artifact.track_label,
-                volume=1.0,
+                volume=tracks_by_id[artifact.sound_track_id].gain,
                 track_id=item_id,
                 generation_model="stem",
             )
