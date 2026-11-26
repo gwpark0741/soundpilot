@@ -7,54 +7,41 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  packages: read # registry cache and the pinned tools image
+
 jobs:
-  lint-and-format-check:
-    runs-on: ubuntu-slim
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Install UV
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-
-      - name: venv cache
-        id: venv-cache
-        uses: actions/cache@v4
-        with:
-          key: cache-key-${{ hashFiles('pyproject.toml', 'uv.lock') }}
-          path: |
-            ./.venv
-
-      - name: Sync venv
-        run: |
-          uv sync --dev --locked --extra observability --extra ui
-
-      - name: lint
-        run: |
-          uv run ruff check --exit-non-zero-on-fix --no-cache --output-format github src/ server/src/
-
-      - name: format
-        run: |
-          uv run ruff format --check --no-cache --output-format github src/ server/src/
-
-      - name: type-check
-        run: |
-          uv run ty check --output-format github --error-on-warning src/
-
-  tests:
+  # UI app (src/): one environment for lint, format, type check and tests.
+  python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install UV
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      # Caches uv's package downloads (keyed on uv.lock), not the venv: a cached venv points at
+      # a Python that the next runner does not have, so uv deletes it and starts over.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Backend tests
-        run: |
-          uv sync --dev --locked --extra observability --extra ui
-          uv run --extra ui --with pytest --with pytest-asyncio python -m pytest -q tests
+
+      - name: Sync venv
+        run: uv sync --dev --locked --extra observability --extra ui
+
+      # --no-sync: keep the venv exactly as synced above (with the ui and observability extras).
+      - name: lint
+        run: uv run --no-sync ruff check --exit-non-zero-on-fix --no-cache --output-format github src/ server/src/
+
+      - name: format
+        run: uv run --no-sync ruff format --check --no-cache --output-format github src/ server/src/
+
+      - name: type-check
+        run: uv run --no-sync ty check --output-format github --error-on-warning src/
+
+      - name: tests
+        run: uv run --no-sync --with pytest --with pytest-asyncio python -m pytest -q tests
 
   web:
     runs-on: ubuntu-latest
@@ -73,28 +60,38 @@ jobs:
       - run: npm test
       - run: npm run build
 
-  # Builds the UI and server images without pushing, so a broken Dockerfile or dependency
-  # fails the PR instead of the publish after merge.
-  docker-build:
+  # Builds the same RunPod image the Publish Image workflow pushes (docker-bake.hcl, target
+  # runpod), without pushing, so a broken Dockerfile, dependency or start script fails the PR
+  # instead of the publish after merge. server-test runs the server unit tests inside the
+  # server image. Layers come read-only from the registry cache the publish writes.
+  image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Free disk
-        run: sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: docker/setup-buildx-action@v3
-      - name: Build UI image
-        uses: docker/build-push-action@v6
+
+      - name: Build the RunPod image and run the server tests
+        uses: docker/bake-action@v6
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/soundpilot
+          CACHE: ghcr.io/${{ github.repository_owner }}/soundpilot:buildcache
         with:
-          context: .
-          file: Dockerfile
-          push: false
-          # Read-only: layers published by the Publish Image workflow.
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/soundpilot:buildcache-ui
-      - name: Build server image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: server/Dockerfile
-          push: false
-          # Read-only: layers published by the Publish Image workflow.
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/soundpilot:buildcache-server
+          source: .
+          files: docker-bake.hcl
+          targets: runpod,server-test
+          # No image output and no cache writes: a PR must not overwrite main's cache.
+          set: |
+            *.output=type=cacheonly
+            *.cache-to=
