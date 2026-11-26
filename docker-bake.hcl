@@ -67,3 +67,16 @@ target "runpod" {
   cache-from = cache_from("runpod")
   cache-to   = cache_to("runpod", "min")
 }
+
+# Runs the server unit tests inside the server image, so they see the same Python and packages the
+# image ships. CI builds it with no output; it produces no image.
+target "server-test" {
+  contexts = {
+    server = "target:server"
+  }
+  dockerfile-inline = <<-DOCKERFILE
+    FROM server
+    COPY server/tests /app/server/tests
+    RUN python -m unittest discover -s tests
+  DOCKERFILE
+}
