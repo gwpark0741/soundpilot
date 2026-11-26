@@ -27,7 +27,6 @@ jobs:
             ./.venv
 
       - name: Sync venv
-        if: ${{ steps.venv-cache.outputs.cache-hit != 'true' }}
         run: |
           uv sync --dev --locked --extra observability --extra ui
 
