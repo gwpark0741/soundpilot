@@ -19,7 +19,7 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: venv cache
-        id: sca_data_venv_cache
+        id: venv-cache
         uses: actions/cache@v4
         with:
           key: cache-key-${{ hashFiles('pyproject.toml', 'uv.lock') }}
