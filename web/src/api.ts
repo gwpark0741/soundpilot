@@ -4,6 +4,7 @@ import type { EventSpan, SpanEdit } from "./lib/pendingEdits";
 import type {
   AssetResponse,
   FullAssetResponse,
+  GpuConnection,
   ProjectSummary,
   TrackWindowResponse,
   VideoAsset,
@@ -74,6 +75,33 @@ export async function importBundle(form: HTMLFormElement): Promise<void> {
   }
 }
 
+export async function fetchConnection(): Promise<GpuConnection> {
+  const response = await fetch("/api/connection");
+  if (!response.ok) {
+    throw new Error(`Failed to fetch GPU server settings: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function saveConnection(body: {
+  server_url: string;
+  tools_url: string;
+  token: string | null;
+}): Promise<GpuConnection> {
+  const response = await fetch("/api/connection", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    // 409 sends a string detail; 422 (pydantic) sends a list of {msg}.
+    const detail = typeof payload?.detail === "string" ? payload.detail : payload?.detail?.[0]?.msg ?? "";
+    throw new Error(detail || `Failed to save GPU server settings: ${response.status}`);
+  }
+  return response.json();
+}
+
 export async function fetchProjects(): Promise<ProjectSummary[]> {
   const response = await fetch("/api/projects");
   if (!response.ok) {
@@ -108,11 +136,8 @@ export async function resetSoundTimeline(): Promise<void> {
   }
 }
 
-export async function generateAudio(serverUrl: string, asset: VideoAsset | null): Promise<void> {
+export async function generateAudio(asset: VideoAsset | null): Promise<void> {
   const formData = new FormData();
-  if (serverUrl.trim()) {
-    formData.append("server_url", serverUrl.trim());
-  }
   if (asset) {
     const assetBlob = new Blob([JSON.stringify(asset)], { type: "application/json" });
     formData.append("asset", assetBlob, "edited-asset.json");
@@ -131,15 +156,11 @@ export async function regenerateEventAudio(
   soundEventId: string,
   description: string,
   spokenText: string | null,
-  serverUrl: string | null,
 ): Promise<void> {
   const formData = new FormData();
   formData.append("description", description);
   if (spokenText) {
     formData.append("spoken_text", spokenText);
-  }
-  if (serverUrl) {
-    formData.append("server_url", serverUrl);
   }
   const response = await fetch(`/api/audio/events/${soundEventId}/regenerate`, {
     method: "POST",

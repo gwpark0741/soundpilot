@@ -12,8 +12,9 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from v2a_inspect.config import connection
 from v2a_inspect.media_utils import probe_prepared_video
 from v2a_inspect.audio_generation.routing import route_tracks
 from v2a_inspect.models import SoundTimeline, VideoAsset
@@ -64,7 +65,6 @@ from .track_edit import (
 
 
 DEFAULT_WORK_DIR = os.getenv("V2A_INSPECT_UI_WORK_DIR")
-DEFAULT_SERVER_URL = os.getenv("V2A_INSPECT_UI_SERVER_URL")
 DEFAULT_SCENE_THRESHOLD = float(os.getenv("V2A_INSPECT_UI_SCENE_THRESHOLD", "27.0"))
 DEFAULT_MAX_KEYFRAMES_PER_SCENE = int(
     os.getenv("V2A_INSPECT_UI_MAX_KEYFRAMES_PER_SCENE", "20")
@@ -94,6 +94,20 @@ class NewTrackBody(BaseModel):
     spans: list[SpanBody]
 
 
+class ConnectionBody(BaseModel):
+    server_url: str
+    tools_url: str
+    token: str | None = None
+
+    @field_validator("server_url", "tools_url", mode="after")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        value = value.strip()
+        if value and not value.startswith(("http://", "https://")):
+            raise ValueError("URL must start with http:// or https://")
+        return value
+
+
 class EventSpanBody(BaseModel):
     sound_event_id: uuid.UUID
     start_frame: int
@@ -105,6 +119,22 @@ def create_router(store: VideoAssetStore) -> APIRouter:
     router = APIRouter()
     # Project the last /api/runs started; only used to label a directory without asset.json as running.
     run_project_id: str | None = None
+
+    @router.get("/api/connection")
+    async def get_connection() -> dict[str, object]:
+        return _connection_payload()
+
+    @router.post("/api/connection")
+    async def set_connection(body: ConnectionBody) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        connection.set_connection(
+            body.server_url,
+            body.tools_url,
+            connection.override_token() if body.token is None else body.token.strip(),
+        )
+        return _connection_payload()
 
     @router.get("/api/asset")
     async def get_asset() -> dict[str, object]:
@@ -248,7 +278,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             sound_event_id,
             description,
             spoken_text,
-            server_url or DEFAULT_SERVER_URL or None,
+            server_url or None,
         )
         await store.publish_asset_mutation(
             snapshot.asset, stage="queued event audio regeneration"
@@ -605,7 +635,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         options = PipelineOptions(
             scene_threshold=scene_threshold,
             max_keyframes_per_scene=max_keyframes_per_scene,
-            server_url=server_url or DEFAULT_SERVER_URL or None,
+            server_url=server_url or None,
         )
         background_tasks.add_task(
             run_uploaded_video_pipeline,
@@ -825,7 +855,7 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             run_audio_generation_pipeline,
             video_asset,
             store,
-            server_url or DEFAULT_SERVER_URL or None,
+            server_url or None,
         )
         return {"status": "queued"}
 
@@ -943,6 +973,14 @@ async def _resolve_import_video(upload_path: Path, root_dir: Path) -> VideoAsset
         original_audio_path=original_audio_path,
         has_audio=original_audio_path is not None,
     )
+
+
+def _connection_payload() -> dict[str, object]:
+    return {
+        "server_url": connection.inference_url() or "",
+        "tools_url": connection.tools_url(),
+        "token_set": connection.token_set(),
+    }
 
 
 def _summary_payload(snapshot: VideoAssetSnapshot) -> dict[str, object]:

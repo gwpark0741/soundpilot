@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# One-pod entrypoint: inference server (:8080), Audyssey tools server (:8700) and UI (:8501).
-# Only the UI listens on 0.0.0.0; the other two stay on 127.0.0.1. Exits non-zero if any dies.
+# One-pod entrypoint: inference server (:8080), Audyssey tools server (:8700) and, optionally, UI (:8501).
+# All three listen on 0.0.0.0. One bearer token (SOUNDPILOT_TOKEN, else AUDYSSEY_TOOL_TOKEN, else a
+# generated one printed in the log) protects both GPU servers. The UI starts only when
+# V2A_INSPECT_UI_PASSWORD is set; otherwise this is a GPU-only pod for a UI running elsewhere.
+# Exits non-zero if any service dies.
 set -euo pipefail
 
-: "${V2A_INSPECT_UI_PASSWORD:?set V2A_INSPECT_UI_PASSWORD (the RunPod proxy URL is public)}"
-: "${GEMINI_API_KEY:?set GEMINI_API_KEY}"
+if [ -n "${V2A_INSPECT_UI_PASSWORD:-}" ]; then
+  : "${GEMINI_API_KEY:?set GEMINI_API_KEY}"
+  RUN_UI=1
+else
+  RUN_UI=0
+  echo "[start] V2A_INSPECT_UI_PASSWORD is not set: starting the GPU servers only (no UI)"
+fi
 
 PY=/app/server/.venv/bin/python
 export HF_HOME="${HF_HOME:-/workspace/hf}"
@@ -22,7 +30,15 @@ unset HF_TOKEN  # keep it out of the three servers' environments
 # override HF_HOME for transformers (flan-t5 for SelSync and SAM Audio), so drop it.
 unset TRANSFORMERS_CACHE
 
-TOOL_TOKEN="${AUDYSSEY_TOOL_TOKEN:-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
+TOKEN_GENERATED=0
+if [ -n "${SOUNDPILOT_TOKEN:-}" ]; then
+  TOKEN="$SOUNDPILOT_TOKEN"
+elif [ -n "${AUDYSSEY_TOOL_TOKEN:-}" ]; then
+  TOKEN="$AUDYSSEY_TOOL_TOKEN"
+else
+  TOKEN="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  TOKEN_GENERATED=1
+fi
 pids=()
 svc() { # svc NAME CMD...: run in the background, every output line prefixed with [NAME]
   local name=$1; shift
@@ -43,21 +59,39 @@ ready() { # ready URL SECONDS: poll until HTTP 200, give up early if a service d
 }
 
 svc inference env -C /app/server \
-  V2A_SERVER_HOST=127.0.0.1 V2A_SERVER_PORT=8080 V2A_SERVER_UPLOAD_DIR="$DATA/uploads" \
+  V2A_SERVER_HOST=0.0.0.0 V2A_SERVER_PORT=8080 V2A_SERVER_API_TOKEN="$TOKEN" V2A_SERVER_UPLOAD_DIR="$DATA/uploads" \
   V2A_SERVER_HUNYUAN_ENABLED=false V2A_SERVER_KOKORO_DEVICE="${V2A_SERVER_KOKORO_DEVICE:-cpu}" \
   /app/server/.venv/bin/v2a-inspect-server serve
 
 svc tools env -C /app \
-  AUDYSSEY_TOOL_TOKEN="$TOOL_TOKEN" \
+  AUDYSSEY_TOOL_TOKEN="$TOKEN" \
   AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES="${AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES:-8}" \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   LD_LIBRARY_PATH=/app/gpu/.venv/lib/python3.12/site-packages/nvidia/npp/lib \
   /app/gpu/.venv/bin/audyssey tool-server --tool separation --tool generation \
-  --impl real --host 127.0.0.1 --port 8700
+  --impl real --host 0.0.0.0 --port 8700
 
 ready http://127.0.0.1:8080/healthz 900
 ready http://127.0.0.1:8700/health 900
 
+if [ -n "${RUNPOD_POD_ID:-}" ]; then
+  INFERENCE_URL="https://${RUNPOD_POD_ID}-8080.proxy.runpod.net"
+  TOOLS_URL="https://${RUNPOD_POD_ID}-8700.proxy.runpod.net"
+else
+  HOST_ADDR="$(hostname -I 2>/dev/null | cut -d' ' -f1 || true)"
+  INFERENCE_URL="http://${HOST_ADDR:-this-host}:8080"
+  TOOLS_URL="http://${HOST_ADDR:-this-host}:8700"
+fi
+echo "[start] Connect a local UI with: Open video > Advanced > GPU servers"
+echo "[start]   Inference server URL: $INFERENCE_URL"
+echo "[start]   Audyssey tools URL:   $TOOLS_URL"
+if [ "$TOKEN_GENERATED" = 1 ]; then
+  echo "[start]   Token: $TOKEN"
+else
+  echo "[start]   Token: the value you set in SOUNDPILOT_TOKEN (or AUDYSSEY_TOOL_TOKEN)"
+fi
+
+if [ "$RUN_UI" = 1 ]; then
 # UI. Defaults below are the v2a-inspect UI image's; the demo overrides follow compose.demo.yaml.
 svc ui env \
   V2A_INSPECT_UI_HOST=0.0.0.0 V2A_INSPECT_UI_PORT=8501 \
@@ -65,7 +99,7 @@ svc ui env \
   V2A_INSPECT_UI_SERVER_URL=http://127.0.0.1:8080 \
   V2A_INSPECT_CLIENT_SERVER_HOST=127.0.0.1 V2A_INSPECT_CLIENT_SERVER_PORT=8080 \
   V2A_INSPECT_CLIENT_TIMEOUT="${V2A_INSPECT_CLIENT_TIMEOUT:-300}" \
-  V2A_INSPECT_AUDYSSEY_TOOLS_URL=http://127.0.0.1:8700 V2A_INSPECT_AUDYSSEY_TOOL_TOKEN="$TOOL_TOKEN" \
+  V2A_INSPECT_AUDYSSEY_TOOLS_URL=http://127.0.0.1:8700 V2A_INSPECT_AUDYSSEY_TOOL_TOKEN="$TOKEN" V2A_INSPECT_CLIENT_SERVER_TOKEN="$TOKEN" \
   V2A_INSPECT_VIDEO_ENCODE_USE_NVENC=false \
   V2A_INSPECT_UI_SCENE_THRESHOLD=27.0 V2A_INSPECT_UI_MAX_KEYFRAMES_PER_SCENE=20 \
   V2A_INSPECT_LLM_SMALL_MODEL="${V2A_INSPECT_LLM_SMALL_MODEL:-gemini-3.1-flash-lite}" \
@@ -85,7 +119,10 @@ svc ui env \
   V2A_INSPECT_TTS_PROVIDER="${V2A_INSPECT_TTS_PROVIDER:-kokoro}" \
   /opt/venv/bin/v2a ui
 ready http://127.0.0.1:8501/healthz 60
-echo "[start] all services are up: UI on :8501"
+echo "[start] all services are up: inference :8080, tools :8700, UI :8501"
+else
+  echo "[start] all services are up: inference :8080, tools :8700 (no UI)"
+fi
 
 # wait -n returns when the first service exits; treat any exit as failure.
 wait -n "${pids[@]}" || true

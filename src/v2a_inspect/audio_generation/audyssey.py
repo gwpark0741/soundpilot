@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 
+from v2a_inspect.config.connection import tools_token, tools_url
 from v2a_inspect.config.settings import get_settings
 from v2a_inspect.models import SoundEvent, SoundTrack
 
@@ -38,10 +39,9 @@ def source_plan(
 
 
 def _post(endpoint: str, files: dict, data: dict, out_path: Path) -> Path:
-    settings = get_settings()
-    url = settings.audyssey_tools_url
-    token = settings.audyssey_tool_token
-    headers = {"Authorization": f"Bearer {token.get_secret_value()}"} if token else {}
+    url = tools_url()
+    token = tools_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         response = httpx.post(
             f"{url}/{endpoint}",
