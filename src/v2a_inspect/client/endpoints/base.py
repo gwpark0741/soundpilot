@@ -3,6 +3,7 @@ from typing import Any, Optional
 
 import httpx
 
+from ...config.connection import inference_token, inference_url
 from ..config.settings import settings
 
 
@@ -19,16 +20,13 @@ class BaseClient:
     """Base client for interacting with the inference server."""
 
     def __init__(self, base_url: Optional[str] = None, timeout: Optional[float] = None):
-        self.base_url = (base_url or settings.server_url).rstrip("/")
+        self.base_url = (base_url or inference_url() or settings.server_url).rstrip("/")
         self.timeout = timeout or settings.timeout
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self):
-        headers = (
-            {"Authorization": f"Bearer {settings.server_token}"}
-            if settings.server_token
-            else {}
-        )
+        token = inference_token()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
         self._client = httpx.AsyncClient(
             base_url=self.base_url, timeout=self.timeout, headers=headers
         )

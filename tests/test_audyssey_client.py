@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
+from v2a_inspect.audio_generation import audyssey
 from v2a_inspect.audio_generation.audyssey import (
     generate_track,
     separate_track,
@@ -54,6 +55,15 @@ def _settings(token="t", default="label") -> MagicMock:
 
 @patch("v2a_inspect.audio_generation.audyssey.get_settings")
 class AudysseyClientTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # _post reads url/token through config.connection; route it to the patched settings.
+        patcher = patch(
+            "v2a_inspect.config.connection.get_settings",
+            lambda: audyssey.get_settings(),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_source_plan_maps_speech_and_spans(self, _settings_mock) -> None:
         track = _track(track_type="speech")
         plan = source_plan(
