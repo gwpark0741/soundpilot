@@ -42,12 +42,11 @@ interface VideoEditorProps {
   onOpenProject: (id: string) => Promise<void> | void;
   onDeleteProject: (id: string) => Promise<void> | void;
   onResetSoundTimeline: () => void;
-  onGenerateAudio?: (serverUrl: string, draftAsset: VideoAsset | null) => Promise<void> | void;
+  onGenerateAudio?: (draftAsset: VideoAsset | null) => Promise<void> | void;
   onRegenerateEventAudio?: (
     soundEventId: string,
     description: string,
     spokenText: string | null,
-    serverUrl: string | null,
   ) => Promise<void> | void;
   onRegenerateTrack?: (
     trackId: string,
@@ -114,7 +113,6 @@ export default function VideoEditor({
   const [draftSpans, setDraftSpans] = useState<Span[] | null>(null);
   // A track just added from the panel is selected as soon as it shows up in the timeline.
   const [pendingSelect, setPendingSelect] = useState<string | null>(null);
-  const [serverUrl, setServerUrl] = useState("");
   const [panelError, setPanelError] = useState<string | null>(null);
   // submitError as it was when the dialog opened: it came from a non-dialog action, so don't show it there.
   const [staleDialogError, setStaleDialogError] = useState<string | null>(null);
@@ -520,7 +518,7 @@ export default function VideoEditor({
     }
     setPanelError(null);
     try {
-      await onRegenerateEventAudio(soundEventId, description, spokenText, serverUrl.trim() || null);
+      await onRegenerateEventAudio(soundEventId, description, spokenText);
     } catch (error) {
       setPanelError(error instanceof Error ? error.message : String(error));
       return;
@@ -757,7 +755,7 @@ export default function VideoEditor({
       ? clearGeneratedAudio(applyTimelineEdits(draftAsset, timelineRows, pendingSpans))
       : null;
     try {
-      await onGenerateAudio(serverUrl, committedAsset);
+      await onGenerateAudio(committedAsset);
     } catch {
       return;
     }
@@ -986,8 +984,6 @@ export default function VideoEditor({
         running={state.status === "running"}
         hasVideo={!!video}
         error={submitError === staleDialogError ? null : submitError}
-        serverUrl={serverUrl}
-        onServerUrlChange={setServerUrl}
         onSubmit={onSubmit}
         onImport={onImport}
         onClean={cleanWorkspace}

@@ -214,6 +214,12 @@ export interface TimelineRow {
   spoken_text?: string | null;
 }
 
+export interface GpuConnection {
+  server_url: string;
+  tools_url: string;
+  token_set: boolean;
+}
+
 export interface ProjectSummary {
   id: string;
   name: string;

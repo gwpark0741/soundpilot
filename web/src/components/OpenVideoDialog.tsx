@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
-import { fetchProjects } from "../api";
+import { fetchConnection, fetchProjects, saveConnection } from "../api";
 import { projectMeta } from "../lib/projects";
-import type { ProjectSummary } from "../types";
+import type { GpuConnection, ProjectSummary } from "../types";
 import Icon from "./Icon";
 
 interface OpenVideoDialogProps {
@@ -10,8 +10,6 @@ interface OpenVideoDialogProps {
   running: boolean;
   hasVideo: boolean;
   error: string | null;
-  serverUrl: string;
-  onServerUrlChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void> | void;
   onImport: (event: FormEvent<HTMLFormElement>) => Promise<void> | void;
   onClean: () => Promise<void> | void;
@@ -31,8 +29,6 @@ export default function OpenVideoDialog({
   running,
   hasVideo,
   error,
-  serverUrl,
-  onServerUrlChange,
   onSubmit,
   onImport,
   onClean,
@@ -50,6 +46,58 @@ export default function OpenVideoDialog({
   const [workDir, setWorkDir] = useState("");
   const runFormId = `${uid}-run`;
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+
+  const [serverUrl, setServerUrl] = useState("");
+  const [toolsUrl, setToolsUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [tokenSet, setTokenSet] = useState(false);
+  const [connResult, setConnResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const loadedConn = useRef({ server_url: "", tools_url: "" });
+  const applyConnection = (conn: GpuConnection) => {
+    loadedConn.current = { server_url: conn.server_url, tools_url: conn.tools_url };
+    setServerUrl(conn.server_url);
+    setToolsUrl(conn.tools_url);
+    setTokenSet(conn.token_set);
+  };
+  useEffect(() => {
+    if (!open) return;
+    setConnResult(null);
+    fetchConnection().then(applyConnection, () => {});
+  }, [open]);
+
+  // An empty token field keeps the saved token.
+  const persistConnection = async () => {
+    applyConnection(await saveConnection({ server_url: serverUrl, tools_url: toolsUrl, token: token || null }));
+    setToken("");
+  };
+
+  const saveGpuServers = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setConnResult(null);
+    try {
+      await persistConnection();
+      setConnResult({ ok: true, text: "Saved." });
+    } catch (error) {
+      setConnResult({ ok: false, text: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  // Run also applies GPU server fields that were typed but not saved.
+  const submitRun = async (event: FormEvent<HTMLFormElement>) => {
+    if (token || serverUrl !== loadedConn.current.server_url || toolsUrl !== loadedConn.current.tools_url) {
+      // React sets event.currentTarget to null once this handler awaits; onSubmit reads the form from it.
+      const form = event.currentTarget;
+      try {
+        await persistConnection();
+      } catch (error) {
+        setConnResult({ ok: false, text: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
+      event = Object.assign(Object.create(event), { currentTarget: form });
+    }
+    await onSubmit(event);
+  };
 
   const loadProjects = () => {
     fetchProjects().then(setProjects, () => setProjects([]));
@@ -95,7 +143,7 @@ export default function OpenVideoDialog({
             Close
           </button>
         </div>
-        <form className="dlg-sec" id={runFormId} onSubmit={closeAfter(onSubmit)}>
+        <form className="dlg-sec" id={runFormId} onSubmit={closeAfter(submitRun)}>
           <h3>Analyze a new video</h3>
           <input name="work_dir" type="hidden" value={workDir} />
           <label>
@@ -176,17 +224,6 @@ export default function OpenVideoDialog({
                 onChange={(event) => setWorkDir(event.target.value)}
               />
             </label>
-            <label>
-              Inference server URL
-              <input
-                form={runFormId}
-                name="server_url"
-                type="url"
-                placeholder="http://..."
-                value={serverUrl}
-                onChange={(event) => onServerUrlChange(event.target.value)}
-              />
-            </label>
             <div className="split">
               <label>
                 Scene threshold
@@ -216,6 +253,34 @@ export default function OpenVideoDialog({
                 Clean workspace
               </button>
             </div>
+            <form className="dlg-sec" onSubmit={saveGpuServers}>
+              <h3>GPU servers</h3>
+              <label>
+                Inference server URL
+                <input type="url" placeholder="http://..." value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} />
+              </label>
+              <label>
+                Audyssey tools URL
+                <input type="url" placeholder="http://..." value={toolsUrl} onChange={(event) => setToolsUrl(event.target.value)} />
+              </label>
+              <label>
+                Token
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder={tokenSet ? "Saved" : "From the pod log"}
+                  value={token}
+                  onChange={(event) => setToken(event.target.value)}
+                />
+              </label>
+              <div className="actions">
+                <button className="btn" type="submit">
+                  Save
+                </button>
+              </div>
+              {connResult?.ok ? <p role="status">{connResult.text}</p> : null}
+              {connResult && !connResult.ok ? <p className="err" role="alert">{connResult.text}</p> : null}
+            </form>
           </div>
         </details>
       </div>

@@ -133,13 +133,13 @@ export default function App() {
     }
   }
 
-  async function handleGenerateAudio(serverUrl: string, draftAsset: VideoAsset | null) {
+  async function handleGenerateAudio(draftAsset: VideoAsset | null) {
     setSubmitError(null);
     try {
-      await generateAudio(serverUrl, draftAsset);
+      await generateAudio(draftAsset);
       await refreshAssetSummary();
     } catch (error) {
-      setSubmitError(failure("Could not generate audio.", error, "Check the inference server URL, then press Generate audio again."));
+      setSubmitError(failure("Could not generate audio.", error, "Check the GPU server settings under Open video > Advanced, then press Generate audio again."));
       throw error;
     }
   }
@@ -148,11 +148,10 @@ export default function App() {
     soundEventId: string,
     description: string,
     spokenText: string | null,
-    serverUrl: string | null,
   ) {
     setSubmitError(null);
     try {
-      await regenerateEventAudio(soundEventId, description, spokenText, serverUrl);
+      await regenerateEventAudio(soundEventId, description, spokenText);
       await refreshAssetSummary();
     } catch (error) {
       // Top line: short summary. The full message goes next to the failed control.
