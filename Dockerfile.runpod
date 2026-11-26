@@ -2,13 +2,20 @@
 # Single-container demo for one RunPod GPU pod: UI + inference server + Audyssey tools server.
 # The three runtimes keep their own Python and venv; start with the server image (Debian 13,
 # Python 3.12 in /usr/local) and copy the other two in at the same absolute paths.
-#   docker build -f Dockerfile.runpod -t v2a-inspect-runpod:dev .
+#   docker buildx bake --load runpod        (docker-bake.hcl builds the UI and server stages too)
+#   docker build -f Dockerfile.runpod -t v2a-inspect-runpod:dev .   (from three existing images)
 # Build args default to the local demo tags; point them at registry images to rebuild elsewhere.
 ARG SERVER_IMAGE=v2a-inspect-server:demo
 ARG UI_IMAGE=v2a-inspect:demo
 ARG TOOLS_IMAGE=audyssey-tools:demo-1117
 
 FROM ${UI_IMAGE} AS ui
+USER root
+# The venv's interpreter links point at /usr/local/bin/python, which is 3.12 in the final image;
+# aim them at 3.13 here so the venv can be copied in as one linked layer.
+RUN ln -sf /usr/local/bin/python3.13 /opt/venv/bin/python \
+    && ln -sf python /opt/venv/bin/python3 && ln -sf python /opt/venv/bin/python3.13
+
 FROM ${TOOLS_IMAGE} AS tools
 
 FROM ${SERVER_IMAGE}
@@ -18,29 +25,13 @@ LABEL org.opencontainers.image.source="https://github.com/gwpark0741/soundpilot"
 
 USER root
 
-# UI: Python 3.13 (the venv at /opt/venv links to /usr/local/bin/python3.13 and libpython3.13) + built web app.
-# Only versioned names are copied, so /usr/local/bin/python{,3} stay the server's Python 3.12.
-COPY --from=ui /usr/local/bin/python3.13 /usr/local/bin/python3.13
-COPY --from=ui /usr/local/lib/python3.13 /usr/local/lib/python3.13
-COPY --from=ui /usr/local/lib/libpython3.13.so.1.0 /usr/local/lib/libpython3.13.so.1.0
-COPY --from=ui /opt/venv /opt/venv
-# The venv's interpreter links point at /usr/local/bin/python, which is 3.12 here; aim them at 3.13.
-RUN ln -sf /usr/local/bin/python3.13 /opt/venv/bin/python \
-    && ln -sf python /opt/venv/bin/python3 && ln -sf python /opt/venv/bin/python3.13
-COPY --from=ui /app/web/dist /app/web/dist
-
-# Tools: standalone CPython 3.12 (/opt/python), the venv and the editable audyssey source.
-COPY --from=tools /opt/python /opt/python
-COPY --from=tools /app/gpu /app/gpu
-COPY --from=tools /app/src /app/src
-COPY --from=tools /app/pyproject.toml /app/README.md /app/
-
+# Every step that runs a command comes first, so it reruns only when the server image changes.
 # gcc/libc6-dev: triton compiles GPU kernels at runtime (SAM Audio Judge).
-RUN ldconfig \
-    && apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+# ldconfig: the UI's python3.13 needs libpython3.13 from /usr/local/lib in the loader cache.
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
-
-COPY scripts/runpod/start.sh scripts/runpod/fetch_weights.py /app/runpod/
+COPY --from=ui /usr/local/lib/libpython3.13.so.1.0 /usr/local/lib/libpython3.13.so.1.0
+RUN ldconfig
 
 ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/workspace/hf \
@@ -48,5 +39,25 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Runs as root: RunPod mounts /workspace root-owned, and nothing here needs an unprivileged user.
 WORKDIR /workspace
+
+# The rest only copies files. --link makes each copy a layer of its own that does not depend on
+# the layers below it, so a change in the server, the UI or the scripts reuses the other layers
+# (no rebuild, no re-export, no re-upload). Largest and least often changed first.
+
+# Tools: standalone CPython 3.12 (/opt/python), the venv and the editable audyssey source.
+COPY --link --from=tools /opt/python /opt/python
+COPY --link --from=tools /app/gpu /app/gpu
+COPY --link --from=tools /app/src /app/src
+COPY --link --from=tools /app/pyproject.toml /app/README.md /app/
+
+# UI: Python 3.13 (the venv at /opt/venv links to /usr/local/bin/python3.13 and libpython3.13) + built web app.
+# Only versioned names are copied, so /usr/local/bin/python{,3} stay the server's Python 3.12.
+COPY --link --from=ui /usr/local/bin/python3.13 /usr/local/bin/python3.13
+COPY --link --from=ui /usr/local/lib/python3.13 /usr/local/lib/python3.13
+COPY --link --from=ui /opt/venv /opt/venv
+COPY --link --from=ui /app/web/dist /app/web/dist
+
+COPY --link scripts/runpod/start.sh scripts/runpod/fetch_weights.py /app/runpod/
+
 EXPOSE 8501
 CMD ["bash", "/app/runpod/start.sh"]

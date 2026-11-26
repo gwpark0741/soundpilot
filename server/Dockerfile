@@ -42,12 +42,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY server/src ./src
 
+# uv_cache.json records the src directory's mtime, which would make the whole venv layer differ
+# on every source change; only uv reads it, so drop it (and its RECORD line) from the image.
 RUN --mount=type=cache,target=/root/.cache/uv \
     for attempt in 1 2 3; do \
       uv sync --locked --no-dev && break; \
       if [ "$attempt" = "3" ]; then exit 1; fi; \
       sleep 10; \
-    done
+    done \
+    && dist=$(echo .venv/lib/python3*/site-packages/v2a_inspect_server-*.dist-info) \
+    && rm "$dist/uv_cache.json" && sed -i '/uv_cache\.json/d' "$dist/RECORD"
 
 
 FROM base AS runtime
@@ -66,7 +70,11 @@ RUN groupadd --gid "${APP_GID}" appuser \
     && mkdir -p /data \
     && chown appuser:appuser /data
 
-COPY --from=builder /app /app
+# The venv (torch, CUDA wheels; about 11 GB) is its own layer and depends only on the lock file,
+# so a change in server/src reuses it instead of re-exporting and re-uploading it.
+COPY --link --from=builder /app/server/.venv /app/server/.venv
+COPY --link --from=builder /app/server/src /app/server/src
+COPY --link --from=builder /app/server/pyproject.toml /app/server/uv.lock /app/server/README.md /app/server/
 
 ADD --checksum=sha256:80461bd19c1f7bc1213445eba48aa69554e4b0230c57d3acc80625d2e2519dce --chown=appuser:appuser --chmod=0644 \
     https://raw.githubusercontent.com/facebookresearch/Motionformer/bf43d50/configs/SSV2/divided_224_16x4.yaml \

@@ -3,7 +3,8 @@ name: Publish Image
 # Builds the single RunPod image (UI + inference server + Audyssey tools, Dockerfile.runpod)
 # and pushes ghcr.io/<owner>/soundpilot:latest and :<commit sha>. The UI and server images are
 # built here from this repo as stages and are not pushed; the tools image is a pinned prebuilt
-# package because its code lives in the Audyssey repo.
+# package because its code lives in the Audyssey repo. The layer cache lives next to the image
+# as ghcr.io/<owner>/soundpilot:buildcache-{ui,server,runpod}.
 on:
   push:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - uv.lock
       - Dockerfile
       - Dockerfile.runpod
+      - docker-bake.hcl
       - .dockerignore
       - .github/workflows/publish-image.yaml
   workflow_dispatch:
@@ -36,7 +38,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Free disk (stages and the final image need about 30 GB)
+      # A full rebuild (lock file change) still needs about 30 GB.
+      - name: Free disk
         run: |
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
@@ -47,25 +50,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Plain `docker build` (default builder) so the final build can use the local stage images.
-      - name: Build the UI and server stages
-        run: |
-          docker build -f Dockerfile -t soundpilot-ui:ci .
-          docker build -f server/Dockerfile -t soundpilot-server:ci .
-          docker builder prune -af
-          df -h /
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Build the single image
-        run: |
-          docker build -f Dockerfile.runpod \
-            --build-arg UI_IMAGE=soundpilot-ui:ci \
-            --build-arg SERVER_IMAGE=soundpilot-server:ci \
-            --build-arg TOOLS_IMAGE="$TOOLS_IMAGE" \
-            --label org.opencontainers.image.revision=${{ github.sha }} \
-            -t "$IMAGE:latest" -t "$IMAGE:${{ github.sha }}" .
-          df -h /
+      # docker-bake.hcl builds the UI and server stages and the single image in one graph and
+      # pushes only the single image. Every layer is looked up in the registry cache first, so
+      # only what changed is rebuilt and uploaded; unchanged layers (the CUDA venvs) are reused.
+      - name: Build and push the single image
+        uses: docker/bake-action@v6
+        env: # bake variables; IMAGE and TOOLS_IMAGE come from the workflow env
+          TAG: ${{ github.sha }}
+          REVISION: ${{ github.sha }}
+          CACHE: ${{ env.IMAGE }}:buildcache
+        with:
+          source: .
+          files: docker-bake.hcl
+          targets: runpod
+          set: runpod.output=type=registry
 
-      - name: Push
-        run: |
-          docker push "$IMAGE:${{ github.sha }}"
-          docker push "$IMAGE:latest"
+      - name: Tag latest
+        run: docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:${{ github.sha }}"

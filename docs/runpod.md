@@ -85,29 +85,23 @@ main에 merge되면 GitHub Actions(`.github/workflows/publish-image.yaml`, Publi
 
 기여 절차는 [contributing.md](contributing.md)를 따른다. 아래는 sv3에서 직접 빌드할 때의 절차이다.
 
-ghcr.io에 `write:packages` 권한이 있는 personal access token이 필요하다. 기존 세 image가 로컬에 있어야 한다.
+ghcr.io에 `write:packages` 권한이 있는 personal access token이 필요하다.
 
 ```bash
 echo "$GHCR_TOKEN" | docker login ghcr.io -u gwpark0741 --password-stdin
 
 # sv3의 기본 builder는 RUN 단계에서 실패하므로 docker-container builder를 지정한다.
-# 이 builder는 daemon의 로컬 image를 볼 수 없으므로 세 image를 OCI layout으로 내보내 build context로 넘긴다.
-O=/tmp/oci; mkdir -p $O/{server,ui,tools}
-docker save v2a-inspect-server:demo | tar -x -C $O/server
-docker save v2a-inspect:demo | tar -x -C $O/ui
-docker save audyssey-tools:demo-1117 | tar -x -C $O/tools
-
+# docker-bake.hcl이 UI, server image를 stage로 함께 빌드하므로 docker save나 build context가 필요 없다.
+# CACHE를 주면 CI가 올린 layer cache를 받아 바뀐 layer만 빌드한다.
 TAG=demo-$(date +%Y%m%d)
-BUILDX_BUILDER=audyssey-builder docker buildx build -f Dockerfile.runpod \
-  -t ghcr.io/gwpark0741/soundpilot:$TAG --load \
-  --build-context v2a-inspect-server:demo=oci-layout://$O/server:demo \
-  --build-context v2a-inspect:demo=oci-layout://$O/ui:demo \
-  --build-context audyssey-tools:demo-1117=oci-layout://$O/tools:demo-1117 .
-
-docker push ghcr.io/gwpark0741/soundpilot:$TAG
+BUILDX_BUILDER=audyssey-builder CACHE=ghcr.io/gwpark0741/soundpilot:buildcache \
+  IMAGE=ghcr.io/gwpark0741/soundpilot TAG=$TAG \
+  docker buildx bake -f docker-bake.hcl --set runpod.output=type=registry runpod
 ```
 
-세 source image가 registry에 있으면 build context 없이 build arg로 지정한다: `--build-arg SERVER_IMAGE=... --build-arg UI_IMAGE=... --build-arg TOOLS_IMAGE=...`.
+로컬에서 실행해 볼 image만 필요하면 `--load`로 받는다: `BUILDX_BUILDER=audyssey-builder docker buildx bake -f docker-bake.hcl --load runpod` (tag `soundpilot:dev`).
+
+layer cache는 `ghcr.io/gwpark0741/soundpilot:buildcache-{ui,server,runpod}`에 있다. main에 merge되면 Publish Image workflow가 같은 cache로 빌드하고 갱신한다. `uv.lock`이나 `server/uv.lock`이 바뀌면 해당 venv layer만 다시 빌드된다.
 
 ghcr.io package는 기본이 private이므로, RunPod에서 받으려면 package를 public으로 바꾸거나 RunPod의 Container Registry Auth에 ghcr 계정과 `read:packages` token을 등록한다. image에는 가중치와 secret이 들어 있지 않다.
 

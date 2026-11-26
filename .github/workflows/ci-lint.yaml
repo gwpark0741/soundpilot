@@ -89,9 +89,13 @@ jobs:
           context: .
           file: Dockerfile
           push: false
+          # Read-only: layers published by the Publish Image workflow.
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/soundpilot:buildcache-ui
       - name: Build server image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: server/Dockerfile
           push: false
+          # Read-only: layers published by the Publish Image workflow.
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/soundpilot:buildcache-server
